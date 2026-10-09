@@ -43,4 +43,53 @@ func (c *CatalogoController) Categorias() {
 	}
 	c.Responder(http.StatusOK, cats)
 }
+//MetodosPago Lista los metodos de pago disponibles (tarjetas,PSE, salgo Jobsy)
+// GET /api/tienda/metodos-pago
+
+func (c *CatalogoController) MetodosPago() {
+	items, err := svc.Pagos.MetodosDisponibles(c.Contexto())
+	if err != nil{
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusOK, items)
+	}
+
+//Planes Lista los planes de suscripcion disponibles.
+// GET /api/tienda/planes
+
+func (c *CatalogoController) Planes() {
+	items, err := svc.Tienda.Planes(c.Contexto())
+	if err != nil{
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusOK, items)
+}
+
+//TiendaController atiende el carrito, los pedidos, los pagos y el saldo 
+type TiendaController struct {
+	SesionController	
+}
+
+//CrearPedido hace el checkout: crea el pedido y lo cobra con el metodo
+//Indicado. Responde 201 con el pedido. POST /api/tienda/pedidos.
+
+func (c *TiendaController) CrearPedido() {
+	id, err := c.UsuarioActual()
+	if err != nil{
+		c.Fallo(err)
+		return
+	}
+	var p services.PeticionCheckout
+	if err := c.LeerJSON(&p); err != nil {
+		c.Fallo(err)
+		return
+	}
+	pedido, err := svc.Tienda.CrearPedido(c.Contexto (), id, p)
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusCreated, pedido)
 }
