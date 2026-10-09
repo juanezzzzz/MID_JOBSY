@@ -2,9 +2,9 @@ package services
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,11 +28,13 @@ var TablasCatalogo = map[string]string{
 	"niveles-experiencia":     "niveles_experiencia",
 }
 
+// Se usan los errores de models para que el BaseController responda igual
+// que en el resto del mid.
 var (
-	ErrTablaNoExiste      = errors.New("ese catalogo no existe")
-	ErrNoEncontrado       = errors.New("el valor no esta en el catalogo")
-	ErrCatalogoCaido      = errors.New("no se pudo consultar el servicio de catalogo")
-	ErrModalidadSinPareja = errors.New("la modalidad no tiene equivalente en la base")
+	ErrTablaNoExiste      = models.NoEncontrado("Ese catalogo no existe.")
+	ErrNoEncontrado       = models.NoEncontrado("El valor no esta en el catalogo.")
+	ErrModalidadSinPareja = models.Validacion("La modalidad no tiene equivalente en la base.")
+	ErrTamanoSinPareja    = models.Validacion("El tamano no tiene equivalente en la base.")
 )
 
 // El front y la base no nombran igual las modalidades de trabajo.
@@ -51,6 +53,22 @@ var modalidadBaseAFront = map[string]string{
 	"por_jornadas":     "jornada_completa",
 	"interno":          "jornada_completa",
 	"dias_especificos": "por_horas",
+}
+
+// Tamano del inmueble: el front lo maneja como tamano + esLujo y la base
+// mete "lujoso" como un cuarto tamano. Esta tabla vive en Empleo_API.
+var tamanosValidos = map[string]bool{"pequeno": true, "mediano": true, "grande": true}
+
+type tamanoFront struct {
+	tamano string
+	esLujo bool
+}
+
+var tamanoBaseAFront = map[string]tamanoFront{
+	"pequeno": {"pequeno", false},
+	"mediano": {"mediano", false},
+	"grande":  {"grande", false},
+	"lujoso":  {"grande", true},
 }
 
 // Los catalogos casi no cambian, entonces se guardan en memoria un rato
@@ -87,15 +105,25 @@ func ListarCatalogo(tabla, contexto string) ([]models.ItemCatalogo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if contexto == "" {
-		return items, nil
-	}
+	// Al front solo le sirven las activas. Las traducciones si usan todas,
+	// porque un registro viejo puede apuntar a una fila que ya se desactivo.
 	filtrados := []models.ItemCatalogo{}
 	for _, it := range items {
-		if it.Contexto == contexto {
-			filtrados = append(filtrados, it)
+		if !it.Activo {
+			continue
 		}
+		if contexto != "" && it.Contexto != contexto {
+			continue
+		}
+		filtrados = append(filtrados, it)
 	}
+	// dias_semana trae Orden; en las demas tablas viene en 0 y se ordena por id.
+	sort.SliceStable(filtrados, func(i, j int) bool {
+		if filtrados[i].Orden != filtrados[j].Orden {
+			return filtrados[i].Orden < filtrados[j].Orden
+		}
+		return filtrados[i].Id < filtrados[j].Id
+	})
 	return filtrados, nil
 }
 
@@ -125,25 +153,27 @@ func traerTabla(recurso string) ([]models.ItemCatalogo, error) {
 }
 
 func pedirACatalogo(recurso string) ([]models.ItemCatalogo, error) {
-	base := strings.TrimRight(beego.AppConfig.DefaultString("url_catalogo", "http://localhost:8084"), "/")
+	// tamano_inmueble es un catalogo pero lo sirve Empleo_API, no Catalogo_api
+	servicio, llave, porDefecto := "catalogo", "url_catalogo", "http://localhost:8084"
+	if recurso == "tamano_inmueble" {
+		servicio, llave, porDefecto = "empleo", "url_empleo", "http://localhost:8083"
+	}
+	base := strings.TrimRight(beego.AppConfig.DefaultString(llave, porDefecto), "/")
 	// Beego trae 10 filas por defecto, con eso se quedarian estados por fuera
 	url := fmt.Sprintf("%s/v1/%s?limit=500", base, recurso)
 
 	resp, err := cliente.Get(url)
 	if err != nil {
-		logs.Error("catalogo %s: %v", recurso, err)
-		return nil, ErrCatalogoCaido
+		return nil, models.ErrorAPI(servicio, err)
 	}
 	defer resp.Body.Close()
 
 	var cuerpo respuestaCatalogo
 	if err := json.NewDecoder(resp.Body).Decode(&cuerpo); err != nil {
-		logs.Error("catalogo %s: respuesta invalida: %v", recurso, err)
-		return nil, ErrCatalogoCaido
+		return nil, models.ErrorAPI(servicio, fmt.Errorf("respuesta invalida de %s: %w", recurso, err))
 	}
 	if resp.StatusCode != http.StatusOK || !cuerpo.Success {
-		logs.Error("catalogo %s: status %d: %s", recurso, resp.StatusCode, cuerpo.Message)
-		return nil, ErrCatalogoCaido
+		return nil, models.ErrorAPI(servicio, fmt.Errorf("%s respondio %d: %s", recurso, resp.StatusCode, cuerpo.Message))
 	}
 	return cuerpo.Data, nil
 }
@@ -231,4 +261,30 @@ func IDDiaSemana(codigo string) (int, error) {
 
 func DiaSemanaDesdeID(id int) (string, error) {
 	return buscarNombre("dias_semana", id)
+}
+
+// IDTamano pasa tamano + esLujo al id de tamano_inmueble. Si es de lujo
+// gana "lujoso", que es como la base guarda la gama alta. Tambien acepta
+// "lujoso" directo porque asi lo tipa el front en job.model.ts.
+func IDTamano(tamano string, esLujo bool) (int, error) {
+	if esLujo || tamano == "lujoso" {
+		return buscarID("tamano_inmueble", "", "lujoso")
+	}
+	if !tamanosValidos[tamano] {
+		return 0, ErrTamanoSinPareja
+	}
+	return buscarID("tamano_inmueble", "", tamano)
+}
+
+// TamanoDesdeID devuelve el tamano y si es de lujo por separado.
+func TamanoDesdeID(id int) (string, bool, error) {
+	nombre, err := buscarNombre("tamano_inmueble", id)
+	if err != nil {
+		return "", false, err
+	}
+	t, ok := tamanoBaseAFront[nombre]
+	if !ok {
+		return "", false, ErrTamanoSinPareja
+	}
+	return t.tamano, t.esLujo, nil
 }
