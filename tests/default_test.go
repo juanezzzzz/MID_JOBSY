@@ -19,12 +19,12 @@ func init() {
 	beego.TestBeegoInit(apppath)
 }
 
-func TestHealth(t *testing.T) {
-	r, _ := http.NewRequest("GET", "/health", nil)
+func TestSalud(t *testing.T) {
+	r, _ := http.NewRequest("GET", "/api/salud", nil)
 	w := httptest.NewRecorder()
 	beego.BeeApp.Handlers.ServeHTTP(w, r)
 
-	Convey("Subject: GET /health\n", t, func() {
+	Convey("Subject: GET /api/salud\n", t, func() {
 		Convey("Status Code Should Be 200", func() {
 			So(w.Code, ShouldEqual, 200)
 		})
