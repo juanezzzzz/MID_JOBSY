@@ -8,8 +8,11 @@ type MainController struct {
 	beego.Controller
 }
 
-func (c *MainController) Get() {
-	c.Data["Website"] = "beego.vip"
-	c.Data["Email"] = "astaxie@gmail.com"
-	c.TplName = "index.tpl"
+func (c *MainController) Health() {
+	c.Data["json"] = map[string]interface{}{
+		"status":  "ok",
+		"service": "MID_JOBSY",
+		"message": "API MID funcionando correctamente",
+	}
+	c.ServeJSON()
 }
