@@ -1,58 +1,76 @@
+
 package models
 
-import "net/http"
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// Codigo es un identificador estable que el frontend puede usar para el switch.
+// A diferencia del mensaje, no cambia aunque reescribamos el texto.
+
+type Codigo string
+
+const (
+	CodValidacion           Codigo = "VALIDACION"
+	CodNoAutorizado         Codigo = "NO_AUTORIZADO"
+	CodProhibido            Codigo = "PROHIBIDO"
+	CodNoEncontrado         Codigo = "NO_ENCONTRADO"
+	CodConflicto            Codigo = "CONFLICTO"
+	CodUpstream             Codigo = "UPSTREAM"
+	CodInterno              Codigo = "INTERNO"
+	CodLimite               Codigo = "LIMITE_PETICIONES"
+	CodNoImplem             Codigo = "NO_IMPLEMENTADO"
+)
+
+// Error es el error de dominio del mid. Lleva el status HTTP que le
+// Corresponde, Para que el handler no tenga que decidirlo.
 
 type Error struct {
-	Status int `json:"-"`
-	Codigo string `json:"codigo"`
-	Mensaje string `json: "Mensaje"`
-	Causa error `json:"-"`
-}
+	Codigo Codigo
+	Mensaje string
+	Status int
 
-type errorDeAPI struct {
-	api string
+	// Campos lleva los errores por campo de un formulario. El frontend los
+	// pinta al lado del input correspondiente.
+	Campos map[string]string
+
+	// causa es el error original. Se registra en el log pero NUNCA se
+	// serializa hacia el cliente: puede traer nombres de tabla y constraints.
 	causa error
 }
 
+// Error implementa la interfaz error, Incluyendo la causa si la hay.
+
 func (e *Error) Error() string {
-	if e.Causa != nil {
-		return e.Codigo + ": " + e.Mensaje + ": " + e.Causa.Error()
+	if e.causa != nil {
+		return fmt.Sprintf("%s: %s: %v", e.Codigo, e.Mensaje, e.causa)
 	}
-	return e.Codigo + ": " + e.Mensaje
+	return fmt.Sprintf("%s: %s", e.Codigo, e.Mensaje)
 }
 
-func Validacion(mensaje string) *Error {
-	return &Error{Status: http.StatusBadRequest, Codigo: "VALIDACION", Mensaje: mensaje}
+// Unwrap expone la causa para errors.Is y errors.As.
+func (e *Error) Unwrap() error {
+	return e.causa
 }
 
-func NoAutorizado(mensaje string) *Error {
-	return &Error{Status: http.StatusUnauthorized, Codigo: "NO_AUTORIZADO", Mensaje: mensaje}
+// Causa expone el error original para el logger. No usar en la respuesta.
+func (e *Error) Causa() error {
+	return e.causa
 }
 
-func Prohibido(mensaje string) *Error {
-	return &Error{Status: http.StatusForbidden, Codigo: "PROHIBIDO", Mensaje: mensaje}
+// Con adjunta la causa original sin exponerla al cliente.
+func (e *Error) Con(causa error) *Error {
+	e.causa = causa
+	return e
 }
 
-func NoEncontrado(mensaje string) *Error{
-	return &Error{Status: http.StatusNotFound, Codigo: "NO_ENCONTRADO", Mensaje: mensaje}
-}
-
-func Conflicto(mensaje string) *Error{
-	return &Error{Status: http.StatusConflict, Codigo: "CONFLICTO", Mensaje: mensaje}
-}
-
-func ErrorAPI(api string, causa error) *Error{
-	return &Error{
-		Status: http.StatusBadGateway,
-		Codigo: "UPSTREAM",
-		Mensaje: "Un servicio no esta disponible en este momento. Intentalo de nuevo.",
-		Causa: &errorDeAPI{api: api, causa: causa},
+// Con Campo agrega un error de validacion asociado a un campo del formulario.
+func (e *Error) ConCampo(campo, mensaje string) *Error {
+	if e.Campos == nil {
+		e.Campos = map[string]string{}
 	}
+	e.Campos[campo] = mensaje
+	return e
 }
-
-func Interno(causa error) *Error {
-	return &Error{Status: http.StatusInternalServerError, Codigo: "INTERNO", Mensaje: "Algo salio mal de nuestro lado.", Causa: causa}
-}
-
-func (e *errorDeAPI) Error() string { return e.api + ": " + e.causa.Error() }
-func (e *errorDeAPI) Unwrap() error { return e.causa}
