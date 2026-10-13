@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -404,4 +405,850 @@ func (s *Tienda) Checkout (ctx context.Context, idUsuario string, p PeticionChek
 	if strings. TrimSpace (p.Metodopago) == "" {
 		return nil, models.Validacion("Falta el metodo de pago.") .ConCampo("metodoPago", "Obligarorio.")
 	}
+
+	type linea struct {
+		prod filaProducto
+		cantidad int
+	}
+	lineas := make([]linea, 0, len(p.Items))
+	subtotal := 0.0
+
+	for _, item := range p.Items {
+		if it.Cantidad <= 0{
+			return nil, models.Validacion("Las cantidades deben ser mayores que cero. ")
+		}
+		id, err := IDNumerico(it.Producto.ID)
+		if err != nil{
+			return nil, models,Validacion("Hay un producto invalido en el carrito.")
+		}
+	}
+
+	var filas []filaProducto
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id)}))
+	o.Query.Set("limit", "1")
+	if err := s.tienda.Get(ctx, "productos", o, &filas); err !=nil {
+		return nil, err
+	}
+	if len(filas) == 0 || !filas[0].Activo{
+		return nil, models.NoEncontrado(fmt.Sprintf("el producto %s ya no esta disponible.", it.producto.ID))
+	}
+
+	prod := filas[0]
+	if prod.Stock < it.Cantidad {
+		return nil, models.Conflicto(fmt.Sprintf("No hay stock suficente de %q: quedan %d.", prod.Nombre, prod.Stock))
+	}
+	lineas = append(lineas, linea{prod: prod, cantidad: it.Cantidad})
+	subtotal += prod.Precio * float64(it.Cantidad)
 }
+
+// El cupon se resuelve contra el subtotal ya calculado con precios de la
+// base, nunca contra el que mande el cliente.
+
+descuento := 0.0
+var idCupon int
+if string.TrimSpace(p.Cupon) != "" {
+	c, err := s.ValidarCupon(ctx, p.Cupon, subtotal)
+	if err != nil {
+		return nil, err
+	}
+	descuento = c.Descuento
+	idCupon, _= strconv.Atoi(c.ID)
+}
+
+idEstadoCarrito, err := s.catalogo.IDEstado(ctx, "carrito", "pagado")
+if err != nil {
+	return nil, err
+}
+
+idEstadoPedido, err := s.catalogo.IDEstado(ctx, "pedido", "pendiente")
+if err != nil {
+	return nil, err
+}
+
+// facturacion exige un carrito por clave foranea, asi que se crea uno ya
+// cerrado para dejar el pedido bien enlazado.
+
+Var carrito strut{
+	Id int `json:"Id"`
+}
+
+if err := s.tienda.Post(ctx, "carritos", map[string]any{
+		"IdUsuarios": usuario,
+		"IdEstado":   idEstadoCarrito,
+		"Activo":     false,
+	}, &carrito); err != nil {
+		return nil, err
+	}
+
+	total := subtotal - descuento + envioFijo
+	if total < 0 {
+		total = 0
+	}
+	var pedido filaPedido
+	if err := s.tienda.Post(ctx, "facturacion", map[string]any{
+		"IdUsuarios":     usuario,
+		"IdCarritos":     map[string]any{"Id": carrito.Id},
+		"IdEstado":       idEstadoPedido,
+		"Subtotal":       subtotal,
+		"DescuentoTotal": descuento,
+		"CuponDescuento": descuento,
+		"Envio":          envioFijo,
+		"Total":          total,
+		"Activo":         true,
+	}, &pedido); err != nil {
+		return nil, err
+	}
+	if pedido.Id == 0 {
+		return nil, models.Upstream("tienda", fmt.Errorf("el alta del pedido no devolvio id"))
+	}
+
+	items := make([]models.ItemPedido, 0, len(lineas))
+	for _, l := range lineas {
+		sub := l.prod.Precio * float64(l.cantidad)
+		var creado map[string]any
+		if err := s.tienda.Post(ctx, "pedido_items", map[string]any{
+			"IdPedidos":      map[string]any{"Id": pedido.Id},
+			"IdProductos":    map[string]any{"Id": l.prod.Id},
+			"Cantidad":       l.cantidad,
+			"PrecioUnitario": l.prod.Precio,
+			"Subtotal":       sub,
+			"Activo":         true,
+		}, &creado); err != nil {
+			return nil, err
+		}
+
+		// Descontar stock. Nadie mas lo hace en todo el sistema.
+		if err := s.descontarStock(ctx, l.prod, l.cantidad); err != nil {
+			return nil, err
+		}
+
+		items = append(items, models.ItemPedido{
+			ProductoID: strconv.Itoa(l.prod.Id),
+			Nombre:     l.prod.Nombre,
+			Cantidad:   l.cantidad,
+			Precio:     l.prod.Precio,
+		})
+	}
+
+	// Ahora si se cobra. Hasta aqui el pedido existe y el stock esta
+	// reservado; el cobro puede salir aprobado, pendiente (PSE sale al banco)
+	// o rechazado, y el pedido queda reflejando ese estado.
+	cobro, err := s.pagos.Cobrar(ctx, usuario, p.Correo, pedido.Id, nil, total, DatosPago{
+		Metodo:     p.MetodoPago,
+		Titular:    p.Titular,
+		Ultimos4:   p.Ultimos4,
+		Banco:      p.Banco,
+		TipoCuenta: p.TipoCuenta,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if cobro.Estado == "rechazado" {
+		// El cobro fallo: se devuelve el stock y se anula el pedido, porque
+		// dejar unidades reservadas por un pago que no entro las haria
+		// invendibles.
+		for _, l := range lineas {
+			_ = s.restaurarStock(ctx, l.prod)
+		}
+		_ = s.anularPedido(ctx, pedido.Id, usuario, carrito.Id)
+		return nil, models.Conflicto(cobro.Mensaje)
+	}
+
+	if idCupon > 0 {
+		_ = s.consumirCupon(ctx, idCupon)
+	}
+
+	estadoPedido := "pendiente"
+	if cobro.Estado == "aprobado" {
+		estadoPedido = "pagado"
+		_ = s.marcarPedidoPagado(ctx, pedido.Id, usuario, carrito.Id, subtotal, descuento, total)
+	}
+
+	return &models.Pedido{
+		ID:             strconv.Itoa(pedido.Id),
+		Numero:         NumeroPedido(pedido.Id),
+		Items:          items,
+		Total:          total,
+		Subtotal:       subtotal,
+		Descuento:      descuento,
+		Envio:          envioFijo,
+		Estado:         estadoPedido,
+		MetodoPago:     p.MetodoPago,
+		Fecha:          time.Now().UTC().Format(time.RFC3339),
+		PagoID:         cobro.PagoID,
+		EstadoPago:     cobro.Estado,
+		URLRedireccion: cobro.URLRedireccion,
+	}, nil
+}
+
+// anularPedido marca el pedido como cancelado cuando el cobro no prospera.
+func (s *Tienda) anularPedido(ctx context.Context, idPedido, idUsuario, idCarrito int) error {
+	idEstado, err := s.catalogo.IDEstado(ctx, "pedido", "cancelado")
+	if err != nil {
+		return err
+	}
+	return s.tienda.Fijar(ctx, "facturacion/"+strconv.Itoa(idPedido), map[string]any{
+		"IdEstado": idEstado,
+		"Activo":   false,
+	})
+}
+
+// marcarPedidoPagado pasa el pedido al estado "pagado".
+func (s *Tienda) marcarPedidoPagado(ctx context.Context, idPedido, idUsuario, idCarrito int, subtotal, descuento, total float64) error {
+	idEstado, err := s.catalogo.IDEstado(ctx, "pedido", "pagado")
+	if err != nil {
+		return err
+	}
+	return s.tienda.Fijar(ctx, "facturacion/"+strconv.Itoa(idPedido), map[string]any{"IdEstado": idEstado})
+}
+
+// restaurarStock devuelve el producto a las unidades que tenia antes del
+// descuento.
+//
+// No vale con descontar una cantidad negativa: la fila que se conserva en
+// memoria es la ANTERIOR al descuento, asi que restar un negativo dejaria el
+// stock por encima del original. Se escribe el valor exacto.
+func (s *Tienda) restaurarStock(ctx context.Context, p filaProducto) error {
+	return s.fijarStock(ctx, p, p.Stock)
+}
+
+// descontarStock reenvia el producto entero porque el PUT del backend
+// sobrescribe todas las columnas.
+func (s *Tienda) descontarStock(ctx context.Context, p filaProducto, cantidad int) error {
+	nuevo := p.Stock - cantidad
+	if nuevo < 0 {
+		nuevo = 0
+	}
+	return s.fijarStock(ctx, p, nuevo)
+}
+
+// fijarStock escribe un valor concreto de existencias.
+func (s *Tienda) fijarStock(ctx context.Context, p filaProducto, nuevo int) error {
+	_, err := s.actualizarProducto(ctx, p.Id, func(f map[string]any) error {
+		f["Stock"] = nuevo
+		return nil
+	})
+	return err
+}
+
+// actualizarProducto cambia columnas sueltas del producto sin perder el
+// resto. Ver ClienteUpstream.Parchear.
+func (s *Tienda) actualizarProducto(ctx context.Context, id int, cambiar func(map[string]any) error) (map[string]any, error) {
+	return s.tienda.Parchear(ctx, "productos/"+strconv.Itoa(id), cambiar)
+}
+
+// MisPedidos devuelve los pedidos del usuario con sus lineas.
+func (s *Tienda) MisPedidos(ctx context.Context, idUsuario string) ([]models.Pedido, error) {
+	usuario, err := IDNumerico(idUsuario)
+	if err != nil {
+		return nil, err
+	}
+
+	var pedidos []filaPedido
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{
+		"IdUsuarios": strconv.Itoa(usuario),
+		"Activo":     "true",
+	}))
+	o.Query.Set("limit", "100")
+	o.Query.Set("sortby", "Id")
+	o.Query.Set("order", "desc")
+	if err := s.tienda.Get(ctx, "facturacion", o, &pedidos); err != nil {
+		return nil, err
+	}
+	if len(pedidos) == 0 {
+		return []models.Pedido{}, nil
+	}
+
+	// El historial de pagos da el metodo con que se pago cada pedido.
+	metodos := map[string]string{}
+	if pagos, err := s.pagos.Mios(ctx, idUsuario); err == nil {
+		for _, pg := range pagos {
+			if id, ok := pg["pedidoId"].(string); ok {
+				if m, ok := pg["metodo"].(string); ok && metodos[id] == "" {
+					metodos[id] = m
+				}
+			}
+		}
+	}
+	out, err := s.PedidosADominio(ctx, pedidos)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].MetodoPago = metodos[out[i].ID]
+	}
+	return out, nil
+}
+
+// NumeroPedido es el numero que ve el cliente. Antes habia tres formatos para
+// el mismo pedido segun la pantalla, y uno coincidia con el de los SKU.
+func NumeroPedido(id int) string {
+	return fmt.Sprintf("PED-%05d", id)
+}
+
+// PedidosADominio completa los pedidos con sus lineas, el nombre de cada
+// producto y el estado.
+//
+// Las lineas se piden pedido a pedido y en paralelo. Leerlas todas de una vez
+// y cruzarlas en memoria obligaba a un tope de filas que, superado, dejaba
+// pedidos sin productos sin avisar.
+func (s *Tienda) PedidosADominio(ctx context.Context, pedidos []filaPedido) ([]models.Pedido, error) {
+	lineas := make([][]filaPedidoItem, len(pedidos))
+	tareas := make([]func() error, 0, len(pedidos)+1)
+	for i, p := range pedidos {
+		i, p := i, p
+		tareas = append(tareas, func() error {
+			o := &OpcionesUpstream{Query: map[string][]string{}}
+			o.Query.Set("query", QueryBeego(map[string]string{"IdPedidos": strconv.Itoa(p.Id)}))
+			o.Query.Set("limit", "200")
+			return s.tienda.Get(ctx, "pedido_items", o, &lineas[i])
+		})
+	}
+	nombres := map[int]string{}
+	tareas = append(tareas, func() error {
+		var prods []filaProducto
+		o := &OpcionesUpstream{Query: map[string][]string{}}
+		o.Query.Set("limit", "1000")
+		if err := s.tienda.Get(ctx, "productos", o, &prods); err != nil {
+			return err
+		}
+		for _, pr := range prods {
+			nombres[pr.Id] = pr.Nombre
+		}
+		return nil
+	})
+	if err := EnParalelo(tareas...); err != nil {
+		return nil, err
+	}
+
+	out := make([]models.Pedido, 0, len(pedidos))
+	for i, p := range pedidos {
+		estado := "pendiente"
+		if n, err := s.catalogo.EstadoDesdeID(ctx, p.IdEstado); err == nil {
+			estado = n
+		}
+		items := make([]models.ItemPedido, 0, len(lineas[i]))
+		for _, it := range lineas[i] {
+			item := models.ItemPedido{Cantidad: it.Cantidad, Precio: it.PrecioUnitario}
+			if it.IdProductos != nil {
+				item.ProductoID = strconv.Itoa(it.IdProductos.Id)
+				item.Nombre = nombres[it.IdProductos.Id]
+			}
+			items = append(items, item)
+		}
+		out = append(out, models.Pedido{
+			ID:     strconv.Itoa(p.Id),
+			Numero: NumeroPedido(p.Id),
+			Items:  items,
+			Total:  p.Total,
+			Estado: estado,
+			Fecha:  p.CreadoEn,
+		})
+	}
+	return out, nil
+}
+
+// Gestion del catalogo de la tienda desde el panel de administracion.
+//
+// El panel editaba productos, categorias e inventario sobre datos de ejemplo
+// guardados en localStorage: nada de lo que hacia el administrador llegaba a
+// la base, ni se veia en la tienda.
+
+// PeticionProducto es el cuerpo de alta y edicion. En la edicion todos los
+// campos son opcionales: solo se cambia lo que viene.
+//
+// El SKU no se acepta: la base no tiene esa columna y el mid lo deriva del id.
+type PeticionProducto struct {
+	Nombre      *string  `json:"nombre"`
+	Categoria   *string  `json:"categoria"`
+	Descripcion *string  `json:"descripcion"`
+	Precio      *float64 `json:"precio"`
+	Stock       *int     `json:"stock"`
+	ImagenURL   *string  `json:"imagenUrl"`
+	Estado      *string  `json:"estado"`
+}
+
+// AdminProductos lista todo el catalogo, tambien los productos en borrador,
+// que la tienda publica no muestra.
+func (s *Tienda) AdminProductos(ctx context.Context) ([]models.Producto, error) {
+	var filas []filaProducto
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("limit", "1000")
+	o.Query.Set("sortby", "Id")
+	o.Query.Set("order", "desc")
+	if err := s.tienda.Get(ctx, "productos", o, &filas); err != nil {
+		return nil, err
+	}
+	out := make([]models.Producto, 0, len(filas))
+	for _, f := range filas {
+		out = append(out, productoADominio(f))
+	}
+	return out, nil
+}
+
+// aplicarEstado traduce el estado del panel a las columnas que lo guardan.
+// "agotado" no es una columna: es stock cero.
+func aplicarEstado(f map[string]any, estado string) error {
+	switch estado {
+	case "publicado":
+		f["Activo"], f["Destacado"] = true, false
+	case "destacado":
+		f["Activo"], f["Destacado"] = true, true
+	case "borrador":
+		f["Activo"], f["Destacado"] = false, false
+	case "agotado":
+		f["Activo"], f["Stock"] = true, 0
+	default:
+		return models.Validacion("Estado no valido: "+estado).ConCampo("estado", "Usa publicado, destacado, borrador o agotado.")
+	}
+	return nil
+}
+
+// validarProducto revisa los datos de un producto. En el alta exige nombre,
+// categoria y precio; en la edicion solo valida lo que venga.
+func validarProducto(p PeticionProducto, alta bool) error {
+	if alta && (p.Nombre == nil || p.Categoria == nil || p.Precio == nil) {
+		return models.Validacion("Faltan datos del producto.").ConCampo("nombre", "Nombre, categoria y precio son obligatorios.")
+	}
+	if p.Nombre != nil && strings.TrimSpace(*p.Nombre) == "" {
+		return models.Validacion("El nombre es obligatorio.").ConCampo("nombre", "Obligatorio.")
+	}
+	if p.Precio != nil && *p.Precio <= 0 {
+		return models.Validacion("El precio debe ser mayor que cero.").ConCampo("precio", "Mayor que cero.")
+	}
+	if p.Stock != nil && *p.Stock < 0 {
+		return models.Validacion("El stock no puede ser negativo.").ConCampo("stock", "Cero o mas.")
+	}
+	return nil
+}
+
+// volcar copia a la fila los campos presentes en la peticion.
+func (s *Tienda) volcar(ctx context.Context, f map[string]any, p PeticionProducto) error {
+	if p.Nombre != nil {
+		f["Nombre"] = strings.TrimSpace(*p.Nombre)
+	}
+	if p.Descripcion != nil {
+		f["Descripcion"] = strings.TrimSpace(*p.Descripcion)
+	}
+	if p.Precio != nil {
+		f["Precio"] = *p.Precio
+	}
+	if p.Stock != nil {
+		f["Stock"] = *p.Stock
+	}
+	if p.ImagenURL != nil {
+		f["ImagenUrl"] = strings.TrimSpace(*p.ImagenURL)
+	}
+	if p.Categoria != nil {
+		id, err := s.idCategoria(ctx, *p.Categoria)
+		if err != nil {
+			return models.Validacion("La categoria no existe.").ConCampo("categoria", "Elige una categoria existente.")
+		}
+		f["IdCategoriasTienda"] = map[string]any{"Id": id}
+	}
+	if p.Estado != nil {
+		return aplicarEstado(f, *p.Estado)
+	}
+	return nil
+}
+
+// AdminCrearProducto da de alta un producto. Sin estado explicito nace en
+// borrador, para que no aparezca en la tienda a medio completar.
+func (s *Tienda) AdminCrearProducto(ctx context.Context, p PeticionProducto) (*models.Producto, error) {
+	if err := validarProducto(p, true); err != nil {
+		return nil, err
+	}
+	// El tipo de producto es obligatorio en la base y el panel no lo pide.
+	idTipo, err := s.catalogo.IDTipo(ctx, "producto_tienda", "insumos_aseo")
+	if err != nil {
+		return nil, err
+	}
+
+	f := map[string]any{
+		"IdTipo": idTipo,
+		"Descripcion": "",
+		"PrecioOriginal": 0,
+		"DescuentoPct": 0,
+		"Stock": 0,
+		"ImagenUrl": "",
+		"EsNuevo": true,
+		"Destacado": false,
+		"EnvioGratis": false,
+		"RatingPromedio": 0,
+		"TotalResenas": 0,
+		"Activo": false,
+	}
+	if p.Estado == nil {
+		borrado := "borrador"
+		p.Estado = &borrador
+	}
+	if err := s.volcar(ctx, f, p); err != nil {
+		return nil, err
+	}
+	var creado filaProducto
+	if err := mapToStruct(creado, &creado); err != nil{
+		return nil, err
+	}
+	return s.productoAdmin(ctx, creado.Id)
+}
+
+// AdminActualizarProducto cambia solo los campos presentes.
+func (s *Tienda) AdminActualizarProducto(ctx context.Context, idProducto string, p PeticionProducto) (*models.Producto, error) {
+	id, err := IDNumerico(idProducto)
+	if err != nil {
+		return nil, err
+	}
+	if err := validarProducto(p, false); err != nil {
+		return nil, err
+	}
+	if _, err := s.actualizarProducto(ctx, id, func(f map[string]any) error {
+		return s.volcar(ctx, f, p)
+	}); err != nil {
+		return nil, err
+	}
+	return s.productoAdmin(ctx, id)
+}
+
+// AdminAjustarStock suma o resta unidades. Nunca deja el stock por debajo de
+// cero.
+func (s *Tienda) AdminAjustarStock(ctx context.Context, idProducto string, delta int) (*models.Producto, error) {
+	id, err := IDNumerico(idProducto)
+	if err != nil {
+		return nil, err
+	}
+	if delta == 0 {
+		return nil, models.Validacion("Indica cuantas unidades sumar o restar.").ConCampo("delta", "Distinto de cero.")
+	}
+	if _, err := s.actualizarProducto(ctx, id, func(f map[string]any) error {
+		actual, _ := f["Stock"].(float64)
+		nuevo := int(actual) + delta
+		if nuevo < 0 {
+			nuevo = 0
+		}
+		f["Stock"] = nuevo
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return s.productoAdmin(ctx, id)
+}
+
+// AdminBorrarProducto elimina un producto sin ventas.
+//
+// Uno con ventas no se puede borrar: sus lineas de pedido lo referencian y el
+// historial de compras de los clientes quedaria roto. Para retirarlo de la
+// tienda se pasa a borrador.
+func (s *Tienda) AdminBorrarProducto(ctx context.Context, idProducto string) error {
+	id, err := IDNumerico(idProducto)
+	if err != nil {
+		return err
+	}
+	if _, err := s.productoAdmin(ctx, id); err != nil {
+		return err
+	}
+	var vendidos []filaPedidoItem
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"IdProductos": strconv.Itoa(id)}))
+	o.Query.Set("limit", "1")
+	if err := s.tienda.Get(ctx, "pedido_items", o, &vendidos); err != nil {
+		return err
+	}
+	if len(vendidos) > 0 {
+		return models.Conflicto("Este producto tiene ventas registradas y no se puede borrar. Pasalo a borrador para retirarlo de la tienda.")
+	}
+
+	// Las lineas de carrito son transitorias: se quitan para que la clave
+	// foranea no bloquee el borrado.
+	var lineas []filaCarritoItem
+	oc := &OpcionesUpstream{Query: map[string][]string{}}
+	oc.Query.Set("query", QueryBeego(map[string]string{"IdProductos": strconv.Itoa(id)}))
+	oc.Query.Set("limit", "1000")
+	if err := s.tienda.Get(ctx, "tr_carrito_items", oc, &lineas); err != nil {
+		return err
+	}
+	for _, l := range lineas {
+		if err := s.tienda.Delete(ctx, "tr_carrito_items/"+strconv.Itoa(l.Id)); err != nil {
+			return err
+		}
+	}
+	return s.tienda.Delete(ctx, "productos/"+strconv.Itoa(id))
+}
+
+// productoAdmin devuelve un producto por id aunque este retirado, para el panel
+// de administracion.
+func (s *Tienda) productoAdmin(ctx context.Context, id int) (*models.Producto, error) {
+	var filas []filaProducto
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id)}))
+	o.Query.Set("limit", "1")
+	if err := s.tienda.Get(ctx, "productos", o, &filas); err != nil {
+		return nil, err
+	}
+	if len(filas) == 0 {
+		return nil, models.NoEncontrado("ese producto")
+	}
+	p := productoADominio(filas[0])
+	return &p, nil
+}
+
+// ---- Categorias ----
+
+// categoriaPorID devuelve una categoria activa por id.
+func (s *Tienda) categoriaPorID(ctx context.Context, id int) (*filaCategoria, error) {
+	var cats []filaCategoria
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id)}))
+	o.Query.Set("limit", "1")
+	if err := s.tienda.Get(ctx, "categorias_tienda", o, &cats); err != nil {
+		return nil, err
+	}
+	if len(cats) == 0 || !cats[0].Activa {
+		return nil, models.NoEncontrado("esa categoria")
+	}
+	return &cats[0], nil
+}
+
+// exigirNombreLibre impide dos categorias activas con el mismo nombre: el
+// frontend filtra productos por nombre de categoria.
+func (s *Tienda) exigirNombreLibre(ctx context.Context, nombre string, excepto int) error {
+	var cats []filaCategoria
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("limit", "200")
+	if err := s.tienda.Get(ctx, "categorias_tienda", o, &cats); err != nil {
+		return err
+	}
+	for _, c := range cats {
+		if c.Activa && c.Id != excepto && strings.EqualFold(strings.TrimSpace(c.Nombre), nombre) {
+			return models.Conflicto("Ya existe una categoria con ese nombre.")
+		}
+	}
+	return nil
+}
+
+// AdminCrearCategoria da de alta una categoria vacia.
+func (s *Tienda) AdminCrearCategoria(ctx context.Context, nombre string) (*models.Categoria, error) {
+	nombre = strings.TrimSpace(nombre)
+	if nombre == "" {
+		return nil, models.Validacion("Escribe un nombre.").ConCampo("nombre", "Obligatorio.")
+	}
+	if err := s.exigirNombreLibre(ctx, nombre, 0); err != nil {
+		return nil, err
+	}
+	var creada filaCategoria
+	if err := s.tienda.Post(ctx, "categorias_tienda", map[string]any{
+		"Nombre": nombre,
+		"Icono":  "",
+		"Activa": true,
+	}, &creada); err != nil {
+		return nil, err
+	}
+	return &models.Categoria{ID: strconv.Itoa(creada.Id), Nombre: nombre, Slug: babosa(nombre)}, nil
+}
+
+// AdminRenombrarCategoria cambia el nombre. Los productos la referencian por
+// id, asi que no hay que tocarlos.
+func (s *Tienda) AdminRenombrarCategoria(ctx context.Context, idCategoria, nombre string) (*models.Categoria, error) {
+	id, err := IDNumerico(idCategoria)
+	if err != nil {
+		return nil, err
+	}
+	nombre = strings.TrimSpace(nombre)
+	if nombre == "" {
+		return nil, models.Validacion("Escribe un nombre.").ConCampo("nombre", "Obligatorio.")
+	}
+	if _, err := s.categoriaPorID(ctx, id); err != nil {
+		return nil, err
+	}
+	if err := s.exigirNombreLibre(ctx, nombre, id); err != nil {
+		return nil, err
+	}
+	if err := s.tienda.Fijar(ctx, "categorias_tienda/"+strconv.Itoa(id), map[string]any{"Nombre": nombre}); err != nil {
+		return nil, err
+	}
+	return &models.Categoria{ID: strconv.Itoa(id), Nombre: nombre, Slug: babosa(nombre)}, nil
+}
+
+// AdminBorrarCategoria retira una categoria sin productos.
+func (s *Tienda) AdminBorrarCategoria(ctx context.Context, idCategoria string) error {
+	id, err := IDNumerico(idCategoria)
+	if err != nil {
+		return err
+	}
+	if _, err := s.categoriaPorID(ctx, id); err != nil {
+		return err
+	}
+	var prods []filaProducto
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"IdCategoriasTienda": strconv.Itoa(id)}))
+	o.Query.Set("limit", "1")
+	if err := s.tienda.Get(ctx, "productos", o, &prods); err != nil {
+		return err
+	}
+	if len(prods) > 0 {
+		return models.Conflicto("La categoria tiene productos. Muevelos a otra antes de borrarla.")
+	}
+	return s.tienda.Fijar(ctx, "categorias_tienda/"+strconv.Itoa(id), map[string]any{"Activa": false})
+}
+
+type ResultadoReembolso struct {
+	PedidoID string  `json:"pedidoId"`
+	PagoID   string  `json:"pagoId,omitempty"`
+	Monto    float64 `json:"monto"`
+	Estado   string  `json:"estado"`
+	Mensaje  string  `json:"mensaje"`
+	// StockRepuesto avisa de si las unidades volvieron al catalogo.
+	StockRepuesto bool `json:"stockRepuesto"`
+}
+
+// Reembolsar deshace un pedido ya cobrado.
+//
+// Cuatro pasos, en este orden y no en otro: primero se devuelve el dinero por
+// donde entro, y solo despues se marca. Si se marcara antes y el proveedor
+// rechazara la devolucion, el pedido figuraria como reembolsado sin que nadie
+// haya recibido nada.
+//
+//  1. devolver el dinero (a la pasarela, o al monedero si se pago con saldo)
+//  2. el pago pasa a 'reembolsado' y se anota la transaccion
+//  3. el pedido pasa a 'reembolsado'
+//  4. las unidades vuelven al catalogo
+//
+// Del 2 al 4 no hay transacciones: si alguno falla queda registrado, porque el
+// dinero ya salio y eso hay que poder rastrearlo.
+func (s *Tienda) Reembolsar(ctx context.Context, idPedido, motivo string) (*ResultadoReembolso, error) {
+	id, err := IDNumerico(idPedido)
+	if err != nil {
+		return nil, err
+	}
+
+	pedido, err := s.pedidoPorID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	estado, err := s.catalogo.EstadoDesdeID(ctx, pedido.IdEstado)
+	if err != nil {
+		return nil, err
+	}
+	if estado == "reembolsado" {
+		return nil, models.Conflicto("Ese pedido ya esta reembolsado.")
+	}
+	// Solo se devuelve lo que se llego a cobrar. Un pedido pendiente (un PSE
+	// sin confirmar) o cancelado no tiene dinero que devolver.
+	if estado != "pagado" && estado != "enviado" && estado != "entregado" {
+		return nil, models.Conflicto(
+			"Solo se puede reembolsar un pedido cobrado. Este esta en estado «" + estado + "».")
+	}
+
+	pago, err := s.pagoDePedido(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if pago == nil {
+		return nil, models.Conflicto("Ese pedido no tiene un pago registrado, asi que no hay nada que devolver.")
+	}
+
+	// 1. Devolver el dinero.
+	if err := s.pagos.DevolverDinero(ctx, *pago); err != nil {
+		return nil, err
+	}
+
+	res := &ResultadoReembolso{
+		PedidoID: strconv.Itoa(id),
+		PagoID:   strconv.Itoa(pago.Id),
+		Monto:    pago.Monto,
+		Estado:   "reembolsado",
+		Mensaje:  "Se devolvieron " + formatearMonto(pago.Monto) + ".",
+	}
+
+	// 2 y 3. Marcar. El dinero ya salio: un fallo aqui deja constancia.
+	if err := s.pagos.MarcarReembolsado(ctx, *pago, motivo); err != nil {
+		slog.Error("dinero devuelto pero el pago no quedo marcado",
+			"pedido", id, "pago", pago.Id, "error", err)
+	}
+	if idEstado, err := s.catalogo.IDEstado(ctx, "pedido", "reembolsado"); err == nil {
+		if err := s.tienda.Fijar(ctx, "facturacion/"+strconv.Itoa(id),
+			map[string]any{"IdEstado": idEstado}); err != nil {
+			slog.Error("dinero devuelto pero el pedido no quedo marcado",
+				"pedido", id, "error", err)
+		}
+	}
+
+	// 4. Reponer el stock.
+	res.StockRepuesto = s.reponerStockDe(ctx, id) == nil
+	return res, nil
+}
+// pedidoPorID lee un pedido activo.
+
+func (s *Tienda) pedidoporID(ctx context.Context, id int) (*filaPedido, error){
+	var filas []filaPedido
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id), "Activo": "true"}))
+	o.Query.Set("limit", "1")
+	if err := s.tienda.Get(ctx, "facturacion", o, &filas); err != nil {
+		return nil, err
+	}
+	if len(filas) == 0 || !filas[0].Activo {
+		return nil, models.NoEncontrado("ese pedido")
+
+	}
+	return &filas[0], nil
+}
+
+
+// pagoDePedido busca el cobro aprobado de un pedido.
+func (s *Tienda) pagoDePedido(ctx context.Context, idPedido int) (*filaPago, error){
+	var filas []filaPago
+	o := OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"IdPedidos": strconv.Itoa(idPedido), "Estado": "aprobado"}))
+	
+	o.Query.Set("limit", "20")
+	o.Query.Set("sortby", "Id")
+	o.Query.Set("order", "desc")
+	if err := s.tienda.Get(ctx, "pagos", 0, &filas); err != nil {
+		return nil, err
+	}
+	for i := range filas {
+		n, err := s.catalogo.EstadoDesdeID(ctx, filas[i].IdEstado)
+		if err != nil && n == "aprobado"{
+			return &filas[i], nil 
+		}
+	}
+	return nil, nil
+}
+
+// reponerStockDe devuelve al catalogo las unidades de un pedido.
+func (s *Tienda) responerStockDe(ctx context.Context, idPedido int) error {
+	var lineas[]filaPedidoItem
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"IdPedidos": strconv.Itoa(idPedido)}))
+	o.Query.Set("limit", "200")
+	if err := s.tienda.Get(ctx, "pedido_items", o, &lineas); err != nil{
+		slog.Error("no se puede leer las lineas para reponer stock", "pedido", idPedido, "error", err)
+		return err
+	}
+
+	var fallo error
+	for _, l := ranger lineas{
+		if l.IdProductos == nil {
+			continue
+		}
+		//se suma sobre el valor actual, no sobre el que habia al comprar:
+		// entre medias el stock pudo cambiar por otras ventas.
+
+		if _, err : s.actualizarProducto(ctx, l.IdProdcutos.Id, func(f map[string]any)error {
+			actual, _ := f["Stock"].(float64)
+			f["stock"] = int (acutal) + l.Cantidad
+			return nil
+		}); err != nil {
+			slog.Error("no se pudo reponer el stock de un producto",
+				"pedido", idPedido, "producto", l.IdProductos.Id, "error", err)
+				fallo = err
+		}
+	}
+
+	return fallo 
+}
+
