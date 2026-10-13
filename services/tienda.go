@@ -340,4 +340,68 @@ func (s *Tienda) idCategoria(ctx context.Context, nombre string) (int, error) {
 	return 0, models.NoEncontrado("esa categoria")
 }
 
+// ItemCarrito es una linea del checkout tal como la manda el frontend.
+//
+// El carrito del front vive en localStorage con el Product entero embebido, no
+// solo su id, asi que hay que declarar todos sus campos: el lector de JSON
+// rechaza los desconocidos y si no, el carrito real daria un 400.
+//
+// De todo esto solo se confia en el id. El precio y el stock se releen de la
+// base en el checkout, porque lo que llega del cliente pudo caducar o estar
+// manipulado.
 
+type ProductoCliente struct {
+	ID string `json:"id"`
+	SKU string `json:"sku, omitempty"`
+	Nombre string `json:"nombre, omitempty"`
+	Categoria string `json:"categoria, omitempty"`
+	Descripcion string `json:"descripcion, omitempty"`
+	Precio float64 `json:"precio, omitempty"`
+	Moneda string `json:"moneda, omitempty"`
+	Stock int `json:"stock, omitempty"`
+	ImagenURL string `json:"imagenUrl, omitempty"`
+	Calificacion float64 `json:"calificacion, omitempty"`
+}
+
+type ItemCarrito struct {
+	Producto ProductoCliente `json:"producto"`
+	Cantidad int `json:"cantidad"`
+}
+// PeticionCheckout es el cuerpo de POST /tienda/pedidos.
+//
+// Los campos del instrumento de pago son opcionales porque no todos los
+// metodos los usan: una tarjeta necesita titular y ultimos digitos, PSE
+// necesita el banco, y el saldo interno no necesita nada.
+
+type PeticionCheckout struct {
+	Items []ItemCarrito `json:"items"`
+	MetodoPago string `json:"metodopago"`
+	Cupon string `json:"cupon, omitempty"`
+	Titular string `json:"titular, omitempty"`
+	Ultimos4 string `json:"ultimos4, omitempty"`
+	Banco string `json:"banco, omitempty"`
+	TipoCuenta string `json:"tipocuenta, omitempty"`
+	Correo string `json:"correo, omitempty"`
+}
+
+const envioFijo = 8000.0
+
+// Checkout crea el pedido.
+//
+// El precio NUNCA se toma del cliente: se relee de la base. El carrito del
+// frontend vive en localStorage con el producto entero embebido, asi que su
+// precio puede estar caducado o manipulado.
+
+
+func (s *Tienda) Checkout (ctx context.Context, idUsuario string, p PeticionChekout) (*models.Pedido, error){
+	usuario, err := IDNumerico(idUsuario)
+	if err != nil {
+		return nil, err 
+	}
+	if len(p.Items) == 0 {
+		return nil, models.Validacion("El carrito esta vacio.")
+	}
+	if strings. TrimSpace (p.Metodopago) == "" {
+		return nil, models.Validacion("Falta el metodo de pago.") .ConCampo("metodoPago", "Obligarorio.")
+	}
+}
