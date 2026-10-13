@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"MID_JOBSY/models"
+	"api_MID/models"
 )
 
 // Tienda implementa el catalogo de productos y el checkout.
