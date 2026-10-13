@@ -43,4 +43,4 @@ func (c *CatalogoController) Categorias() {
 	}
 	c.Responder(http.StatusOK, cats)
 }
-}
+
