@@ -12,16 +12,14 @@ import (
 	"time"
 
 	"api_MID/models"
-
-	"google.golang.org/genproto/googleapis/cloud/aiplatform/v1beta1/schema/predict/params"
 )
 
 type sobre struct {
-	success bool `json: "success"`
-	Status int `json: "status"`
-	Message string `json: "message"`
-	Data json.RawMessage `json: "data"`
-	Date json.RawMessage `json: "date"`
+	success bool            `json: "success"`
+	Status  int             `json: "status"`
+	Message string          `json: "message"`
+	Data    json.RawMessage `json: "data"`
+	Date    json.RawMessage `json: "date"`
 }
 
 func (s sobre) carga() json.RawMessage {
@@ -31,21 +29,21 @@ func (s sobre) carga() json.RawMessage {
 	return s.Data
 }
 
-type ClienteAPI struct { 
-	nombre string 
-	base string
-	http *http.Client
+type ClienteAPI struct {
+	nombre string
+	base   string
+	http   *http.Client
 }
 
-func NuevoClienteAPI (nombre, base string, timeout time.Duration) *ClienteAPI {
+func NuevoClienteAPI(nombre, base string, timeout time.Duration) *ClienteAPI {
 	return &ClienteAPI{
 		nombre: nombre,
-		base: strings.TrimRight(base, "/"),
-		http: &http.Client{Timeout: timeout},
+		base:   strings.TrimRight(base, "/"),
+		http:   &http.Client{Timeout: timeout},
 	}
 }
 
-func Filtro(campos map[string]string) string{
+func Filtro(campos map[string]string) string {
 	partes := make([]string, 0, len(campos))
 	for k, v := range campos {
 		partes = append(partes, k+":"+v)
@@ -66,20 +64,20 @@ func (c *ClienteAPI) Put(ruta string, cuerpo, destino any) error {
 	return c.hacer(http.MethodPut, ruta, nil, cuerpo, destino)
 }
 
-	func (c *ClienteAPI) Delete(ruta string) error {
-		return c.hacer(http.MethodDelete, ruta, nil, nil, nil)
-	}
+func (c *ClienteAPI) Delete(ruta string) error {
+	return c.hacer(http.MethodDelete, ruta, nil, nil, nil)
+}
 
 func (c *ClienteAPI) Fijar(ruta string, id int, cambios map[string]any) error {
 	rutaID := fmt.Sprintf("%s/%d", ruta, id)
 	var fila map[string]any
 	if err := c.Get(rutaID, nil, &fila); err != nil {
-		return  err
+		return err
 	}
 	for k, v := range fila {
 		if rel, ok := v.(map[string]any); ok {
 			if relID, ok := rel["id"]; ok {
-				fila[k] = map[string]any{"id":relID}
+				fila[k] = map[string]any{"id": relID}
 			}
 		}
 	}
@@ -111,7 +109,7 @@ func (c *ClienteAPI) hacer(metodo, ruta string, params url.Values, cuerpo, desti
 	}
 	req.Header.Set("Accept", "application/json")
 	if cuerpo != nil {
-		req.Header.Set("Content-Type","application/json")
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

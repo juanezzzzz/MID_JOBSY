@@ -1,8 +1,6 @@
-
 package models
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 )
@@ -13,24 +11,24 @@ import (
 type Codigo string
 
 const (
-	CodValidacion           Codigo = "VALIDACION"
-	CodNoAutorizado         Codigo = "NO_AUTORIZADO"
-	CodProhibido            Codigo = "PROHIBIDO"
-	CodNoEncontrado         Codigo = "NO_ENCONTRADO"
-	CodConflicto            Codigo = "CONFLICTO"
-	CodUpstream             Codigo = "UPSTREAM"
-	CodInterno              Codigo = "INTERNO"
-	CodLimite               Codigo = "LIMITE_PETICIONES"
-	CodNoImplem             Codigo = "NO_IMPLEMENTADO"
+	CodValidacion   Codigo = "VALIDACION"
+	CodNoAutorizado Codigo = "NO_AUTORIZADO"
+	CodProhibido    Codigo = "PROHIBIDO"
+	CodNoEncontrado Codigo = "NO_ENCONTRADO"
+	CodConflicto    Codigo = "CONFLICTO"
+	CodUpstream     Codigo = "UPSTREAM"
+	CodInterno      Codigo = "INTERNO"
+	CodLimite       Codigo = "LIMITE_PETICIONES"
+	CodNoImplem     Codigo = "NO_IMPLEMENTADO"
 )
 
 // Error es el error de dominio del mid. Lleva el status HTTP que le
 // Corresponde, Para que el handler no tenga que decidirlo.
 
 type Error struct {
-	Codigo Codigo
+	Codigo  Codigo
 	Mensaje string
-	Status int
+	Status  int
 
 	// Campos lleva los errores por campo de un formulario. El frontend los
 	// pinta al lado del input correspondiente.
@@ -73,4 +71,44 @@ func (e *Error) ConCampo(campo, mensaje string) *Error {
 	}
 	e.Campos[campo] = mensaje
 	return e
+}
+
+// Validacion crea un error 400 por datos de entrada invalidos.
+func Validacion(mensaje string) *Error {
+	return &Error{Codigo: CodValidacion, Mensaje: mensaje, Status: http.StatusBadRequest}
+}
+
+// NoEncontrado crea un error 404; recurso completa la frase "No encontramos ...".
+func NoEncontrado(recurso string) *Error {
+	return &Error{
+		Codigo:  CodNoEncontrado,
+		Mensaje: fmt.Sprintf("No encontramos %s.", recurso),
+		Status:  http.StatusNotFound,
+	}
+}
+
+// Conflicto crea un error 409 (la operacion choca con el estado actual).
+func Conflicto(mensaje string) *Error {
+	return &Error{Codigo: CodConflicto, Mensaje: mensaje, Status: http.StatusConflict}
+}
+
+// Upstream representa un fallo de un servicio de Jobsy_API. El mensaje que ve
+// el cliente es generico a proposito: el detalle va al log.
+func Upstream(servicio string, causa error) *Error {
+	return &Error{
+		Codigo:  CodUpstream,
+		Mensaje: "Un servicio no esta disponible en este momento. Intentalo de nuevo.",
+		Status:  http.StatusBadGateway,
+		causa:   fmt.Errorf("upstream %s: %w", servicio, causa),
+	}
+}
+
+// Interno crea un error 500 con un mensaje generico; la causa solo va al log.
+func Interno(causa error) *Error {
+	return &Error{
+		Codigo:  CodInterno,
+		Mensaje: "Algo salio mal de nuestro lado.",
+		Status:  http.StatusInternalServerError,
+		causa:   causa,
+	}
 }
