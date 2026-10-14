@@ -2,46 +2,71 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
 	"strconv"
-
-	"github.com/beego/beego/v2/core/logs"
- 	beego "github.com/beego/beego/v2/server/web"
- 	"api_MID/models"
+	"github.com/beego/beego/v2/server/web"
+	beecontext "github.com/beego/beego/v2/server/web/context"
+	"api_MID/models"
+	"api_MID/services"
 )
 
-type BaseController struct {
-	beego.Controller
+type Servicios struct{
+	Cfg *Services.Config
 }
 
-func (c *BaseController) Responder(status int, datos any) {
+var svc *Servicios
+
+func Configurar(s *Servicios) {
+	svc = s
+}
+
+type cuerpoError struct {
+	Error struct {
+		Codigo models.Codigo `json:"codigo"`
+		Mensaje string `json:"mensaje"`
+		Campos map[string]string `json:"campos,omitempty"`
+		PeticionID string `json:"peticionId,omitempty`
+	}`json:"error"`
+}
+
+type BaseController struct { 
+	web.Controller
+}
+
+func (c *BaseController) Responder(status int, v any) {
+	c.Ctx.Output.Header("X-Content-Type-Options", "nosniff")
 	c.Ctx.Output.SetStatus(status)
-	c.Data["json"] = datos
-	_ = c.ServeJSON()
+	c.Data["json"] = v
+	if err := c.ServeJSON(); err != nil {
+		slog.Error("no se pudo serializar la respuesta", "error", err)
+	}
 }
 
-func (c *BaseController) Fallo(err error) {
-	var e *models.Error
-	if !errors.As(err, &e){
-		e = models.Interno(err)
-	}
-	if e.Status >= 500 {
-		logs.Error("%s - > %v", c.Ctx.Input.Method(), c.Ctx.Input.URL(), e)
-	}
-	c.Responder(e.Status, map[string]any{"error": e})
+func (c *BaseController) sinContenido() {
+	c.Ctx.ResponseWriter.WriteHeader(http.StatusNoContent)
+}
+
+func (c *BaseController) fallo(err error) {
+	escribirError(c.Ctx, err)
 }
 
 func (c *BaseController) LeerJSON(destino any) error {
 	dec := json.NewDecoder(bytes.NewReader(c.Ctx.Input.RequestBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(destino); err != nil {
-		return models.Validacion("El cuerpo de la peticion no es valido: " + err.Error())
+		return models.Validacion("El cuerpo de la peticion no es JSON valido").Con(err)
+	}
+	if dec.More(){
+		return models.Validacion("El cuerpo debe contener un unico objeto JSON.")
 	}
 	return nil
 }
 
-func (c *BaseController) Contexto() context.Context {
+func (c *BaseController) contexto() context.Context {
 	return c.Ctx.Request.Context()
 }
 
@@ -49,56 +74,14 @@ func (c *BaseController) ParamID() string {
 	return c.Ctx.Input.Param(":id")
 }
 
-func (c *BaseController) Entero(clave string, porDefecto int) int {
-	n, err := strconv.Atoi(c.GetString(clave))
-	if err != nil {
-		return porDefecto
-	}
+func (c *BaseController) Entero(clave string) int {
+	n, _ := strconv.Atoi(c.Ctx.Input.Query(clave))
 	return n
-}
-type SesionController struct {
-	BaseController
-}
-
-func (c *SesionController) Prepare() {
-	token, err := services.TokenDesdeCabecera(c.Ctx.Input.Header("Authorization"))
-	if err != nil {
-		c.Fallo(err)
-		c.StopRun()
-	}
-	claims, err := svc.Auth.Validar(token)
-	if err != nil {
-		c.Fallo(err)
-		c.StopRun()
-	}
-	c.Ctx.Request = c.Ctx.Request.WithContext(services.ConClaims(c.Ctx.Request.Context(), claims))
-}
-
-func (c *SesionController) UsuarioActual() (string, error) {
-	cl, ok := services.ClaimsDesdeCtx(c.Contexto())
-	if !ok {
-		return "", models.NoAutorizado("")
-	}
-	return cl.UsuarioID, nil
-}
-
-type AdminController struct {
-	SesionController
-}
-
-func (c *AdminController) Prepare() {
-	c.SesionController.Prepare()
-	if err := services.ExigirRol(c.Contexto(), models.RolAdmin); err != nil {
-		c.Fallo(err)
-		c.StopRun()
-	}
 }
 
 func escribirError(ctx *beecontext.Context, err error) {
 	e := models.Desde(err)
 	pid := PeticionID(ctx.Request.Context())
-
-
 	if e.Status >= 500 {
 		slog.Error("fallo al atender la peticion",
 			"peticion_id", pid,
@@ -115,11 +98,10 @@ func escribirError(ctx *beecontext.Context, err error) {
 			"codigo", e.Codigo,
 		)
 	}
-
 	ctx.Output.Header("X-Content-Type-Options", "nosniff")
 	ctx.Output.SetStatus(e.Status)
 	if err := ctx.Output.JSON(nuevoCuerpoError(e, pid), false, false); err != nil {
-		slog.Error("no se pudo serializar el error", "error", err)
+		slog.Error("no se pudo resializar el erro", "error", err)
 	}
 }
 
@@ -129,10 +111,10 @@ func nuevoCuerpoError(e *models.Error, pid string) cuerpoError {
 	cuerpo.Error.Mensaje = e.Mensaje
 	cuerpo.Error.Campos = e.Campos
 	cuerpo.Error.PeticionID = pid
-	return cuerpo
+	return  cuerpo
 }
 
-func errorHTTP(e *models.Error) http.HandlerFunc {
+func errorHTTP(e *models.Error) http.HandlerFunc{
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -140,12 +122,12 @@ func errorHTTP(e *models.Error) http.HandlerFunc {
 	}
 }
 
-func RegistrarErrores() {
+func RegistrarErrores () {
 	web.ErrorHandler("404", errorHTTP(models.NoEncontrado("esa ruta")))
 	web.ErrorHandler("405", errorHTTP(&models.Error{
-		Codigo:  models.CodValidacion,
+		Codigo: models.CodValidacion,
 		Mensaje: "Metodo no permitido.",
-		Status:  http.StatusMethodNotAllowed,
+		Status: http.StatusMethodNotAllowed,
 	}))
 	web.ErrorHandler("413", errorHTTP(models.Validacion("El cuerpo de la peticion es demasiado grande.")))
 }
