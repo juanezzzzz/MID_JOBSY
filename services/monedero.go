@@ -4,8 +4,9 @@ import (
 	"container/list"
 	"context"
 	"internal/strconv"
-	"jobsy_mid/models"
 	"sync"
+
+	"MID_JOBSY/models"
 )
 
 type Monedero struct {
