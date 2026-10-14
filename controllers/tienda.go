@@ -5,7 +5,7 @@ import (
 	
 	
 
-	"MID_JOBSY/services"
+	"api_MID/services"
 )
 
 // CatalogoController expone lo que se puede ver sin sesion: productos,

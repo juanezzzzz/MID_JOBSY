@@ -31,8 +31,8 @@ var TablasCatalogo = map[string]string{
 // Se usan los errores de models para que el BaseController responda igual
 // que en el resto del mid.
 var (
-	ErrTablaNoExiste      = models.NoEncontrado("Ese catalogo no existe.")
-	ErrNoEncontrado       = models.NoEncontrado("El valor no esta en el catalogo.")
+	ErrTablaNoExiste      = models.NoEncontrado("ese catalogo")
+	ErrNoEncontrado       = models.NoEncontrado("ese valor en el catalogo")
 	ErrModalidadSinPareja = models.Validacion("La modalidad no tiene equivalente en la base.")
 	ErrTamanoSinPareja    = models.Validacion("El tamano no tiene equivalente en la base.")
 )
@@ -164,16 +164,16 @@ func pedirACatalogo(recurso string) ([]models.ItemCatalogo, error) {
 
 	resp, err := cliente.Get(url)
 	if err != nil {
-		return nil, models.ErrorAPI(servicio, err)
+		return nil, models.Upstream(servicio, err)
 	}
 	defer resp.Body.Close()
 
 	var cuerpo respuestaCatalogo
 	if err := json.NewDecoder(resp.Body).Decode(&cuerpo); err != nil {
-		return nil, models.ErrorAPI(servicio, fmt.Errorf("respuesta invalida de %s: %w", recurso, err))
+		return nil, models.Upstream(servicio, fmt.Errorf("respuesta invalida de %s: %w", recurso, err))
 	}
 	if resp.StatusCode != http.StatusOK || !cuerpo.Success {
-		return nil, models.ErrorAPI(servicio, fmt.Errorf("%s respondio %d: %s", recurso, resp.StatusCode, cuerpo.Message))
+		return nil, models.Upstream(servicio, fmt.Errorf("%s respondio %d: %s", recurso, resp.StatusCode, cuerpo.Message))
 	}
 	return cuerpo.Data, nil
 }
