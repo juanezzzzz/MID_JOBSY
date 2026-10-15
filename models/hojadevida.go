@@ -26,7 +26,7 @@ type HojaVida struct {
 	ResumenProfesional            string          `json:"resumenProfesional"`
 	Experiencias                  []Experiencia   `json:"experiencias"`
 	Educacion                     []Educacion     `json:"educacion"`
-	Habilidades                   []string        `json:"habilidaes"`
+	Habilidades                   []string        `json:"habilidades"`
 	Certificaciones               []string        `json:"certificaciones"`
-	ArchivoURL                    string          `json:"ArchivoURL,omitempty"`
+	ArchivoURL                    string          `json:"archivoURL,omitempty"`
 }
