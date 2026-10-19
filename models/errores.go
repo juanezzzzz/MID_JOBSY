@@ -1,4 +1,3 @@
-
 package models
 
 import (
@@ -13,24 +12,24 @@ import (
 type Codigo string
 
 const (
-	CodValidacion           Codigo = "VALIDACION"
-	CodNoAutorizado         Codigo = "NO_AUTORIZADO"
-	CodProhibido            Codigo = "PROHIBIDO"
-	CodNoEncontrado         Codigo = "NO_ENCONTRADO"
-	CodConflicto            Codigo = "CONFLICTO"
-	CodUpstream             Codigo = "UPSTREAM"
-	CodInterno              Codigo = "INTERNO"
-	CodLimite               Codigo = "LIMITE_PETICIONES"
-	CodNoImplem             Codigo = "NO_IMPLEMENTADO"
+	CodValidacion   Codigo = "VALIDACION"
+	CodNoAutorizado Codigo = "NO_AUTORIZADO"
+	CodProhibido    Codigo = "PROHIBIDO"
+	CodNoEncontrado Codigo = "NO_ENCONTRADO"
+	CodConflicto    Codigo = "CONFLICTO"
+	CodUpstream     Codigo = "UPSTREAM"
+	CodInterno      Codigo = "INTERNO"
+	CodLimite       Codigo = "LIMITE_PETICIONES"
+	CodNoImplem     Codigo = "NO_IMPLEMENTADO"
 )
 
 // Error es el error de dominio del mid. Lleva el status HTTP que le
 // Corresponde, Para que el handler no tenga que decidirlo.
 
 type Error struct {
-	Codigo Codigo
+	Codigo  Codigo
 	Mensaje string
-	Status int
+	Status  int
 
 	// Campos lleva los errores por campo de un formulario. El frontend los
 	// pinta al lado del input correspondiente.
