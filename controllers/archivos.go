@@ -45,7 +45,7 @@ func (c *ArchivosController) Servir() {
 // (maxuploadsize en app.conf): sin eso un cliente puede agotar la memoria del
 // proceso mandando un multipart enorme.
 
-func (c *SesionController) recibirArchivo(campo, carpeta string) (string, error) {
+func (c *BaseController) recibirArchivo(campo, carpeta string) (string, error) {
 	if svc.Almacen == nil {
 		return "", models.NoImplementado("El almacenamiento de archivos no esta configurado.")
 
