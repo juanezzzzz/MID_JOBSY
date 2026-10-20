@@ -113,26 +113,26 @@ func (c *ClienteAPI) hacer(metodo, ruta string, params url.Values, cuerpo, desti
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return models.ErrorAPI(c.nombre, err)
+		return models.Upstream(c.nombre, err)
 	}
 	defer resp.Body.Close()
 	crudo, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return models.ErrorAPI(c.nombre, err)
+		return models.Upstream(c.nombre, err)
 	}
 	var s sobre
 	if err := json.Unmarshal(crudo, &s); err != nil {
-		return models.ErrorAPI(c.nombre, ftm.Errorf("%s %s: respuesta ilegible: %.200s", metodo, ruta, crudo))
+		return models.Upstream(c.nombre, fmt.Errorf("%s %s: respuesta ilegible: %.200s", metodo, ruta, crudo))
 	}
 	if !s.success {
-		return models.ErrorAPI(c.nombre, fmt.Errorf("%s %s: status %d: %s", metodo, ruta, s.Status, s.Message))
+		return models.Upstream(c.nombre, fmt.Errorf("%s %s: status %d: %s", metodo, ruta, s.Status, s.Message))
 	}
 	carga := s.carga()
 	if destino == nil || len(carga) == 0 || string(carga) == "null" {
 		return nil
 	}
 	if err := json.Unmarshal(carga, destino); err != nil {
-		return models.ErrorAPI(c.nombre, fmt.Errorf("%s %s: data no encaja: %w", metodo, ruta, err))
+		return models.Upstream(c.nombre, fmt.Errorf("%s %s: data no encaja: %w", metodo, ruta, err))
 	}
 	return nil
 }
