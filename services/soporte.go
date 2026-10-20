@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"net/url"
 	"strconv"
 	"strings"
@@ -136,8 +137,14 @@ func (s *Soporte) Mensajes(idUsuario, idReporte string) ([]models.MensajeReporte
 	if err != nil {
 		return nil, err
 	}
+	return s.hilo(rep.Id, func(f filaMensaje) bool { return f.IdRemitente == uid })
+}
+
+// hilo lee los mensajes de un reporte, del mas viejo al mas nuevo. esMio dice
+// de que lado va cada burbuja segun quien este mirando.
+func (s *Soporte) hilo(idReporte int, esMio func(filaMensaje) bool) ([]models.MensajeReporte, error) {
 	params := url.Values{
-		"query":  {Filtro(map[string]string{"IdReportes": strconv.Itoa(rep.Id), "Activo": "true"})},
+		"query":  {Filtro(map[string]string{"IdReportes": strconv.Itoa(idReporte), "Activo": "true"})},
 		"sortby": {"CreadoEn"},
 		"order":  {"asc"},
 		"limit":  {"500"},
@@ -154,7 +161,7 @@ func (s *Soporte) Mensajes(idUsuario, idReporte string) ([]models.MensajeReporte
 			AutorID: strconv.Itoa(f.IdRemitente),
 			Texto:   f.Mensaje,
 			Fecha:   f.CreadoEn,
-			EsMio:   f.IdRemitente == uid,
+			EsMio:   esMio(f),
 		})
 	}
 	return mensajes, nil
@@ -163,26 +170,40 @@ func (s *Soporte) Mensajes(idUsuario, idReporte string) ([]models.MensajeReporte
 // Responder agrega un mensaje del usuario a su propio reporte. Un reporte
 // cerrado ya no acepta mensajes.
 func (s *Soporte) Responder(idUsuario, idReporte, texto string) (*models.MensajeReporte, error) {
-	texto = strings.TrimSpace(texto)
-	if texto == "" {
-		return nil, models.Validacion("El mensaje esta vacio.").ConCampo("texto", "Obligatorio.")
+	texto, err := textoMensaje(texto)
+	if err != nil {
+		return nil, err
 	}
-	if utf8.RuneCountInString(texto) > maxMensajeReporte {
-		return nil, models.Validacion("El mensaje es demasiado largo.").
-			ConCampo("texto", "Maximo "+strconv.Itoa(maxMensajeReporte)+" caracteres.")
-	}
-
 	uid, rep, err := s.reporteDe(idUsuario, idReporte)
 	if err != nil {
 		return nil, err
 	}
+	return s.publicar(rep, uid, texto)
+}
+
+// textoMensaje limpia y valida el texto de un mensaje.
+func textoMensaje(texto string) (string, error) {
+	texto = strings.TrimSpace(texto)
+	if texto == "" {
+		return "", models.Validacion("El mensaje esta vacio.").ConCampo("texto", "Obligatorio.")
+	}
+	if utf8.RuneCountInString(texto) > maxMensajeReporte {
+		return "", models.Validacion("El mensaje es demasiado largo.").
+			ConCampo("texto", "Maximo "+strconv.Itoa(maxMensajeReporte)+" caracteres.")
+	}
+	return texto, nil
+}
+
+// publicar guarda un mensaje en el hilo. Un reporte cerrado ya no acepta
+// mensajes, ni del usuario ni de soporte.
+func (s *Soporte) publicar(rep *filaReporte, idAutor int, texto string) (*models.MensajeReporte, error) {
 	if estado, _ := EstadoDesdeID(rep.IdEstado); estado == "cerrado" {
 		return nil, models.Conflicto("El reporte esta cerrado y ya no acepta mensajes.")
 	}
 
 	nuevo := map[string]any{
 		"IdReportes":  map[string]any{"Id": rep.Id},
-		"IdRemitente": uid,
+		"IdRemitente": idAutor,
 		"Mensaje":     texto,
 		"Activo":      true,
 	}
@@ -192,7 +213,7 @@ func (s *Soporte) Responder(idUsuario, idReporte, texto string) (*models.Mensaje
 	}
 	return &models.MensajeReporte{
 		ID:      strconv.Itoa(creado.Id),
-		AutorID: strconv.Itoa(uid),
+		AutorID: strconv.Itoa(idAutor),
 		Texto:   creado.Mensaje,
 		Fecha:   creado.CreadoEn,
 		EsMio:   true,
@@ -206,19 +227,31 @@ func (s *Soporte) reporteDe(idUsuario, idReporte string) (int, *filaReporte, err
 	if err != nil {
 		return 0, nil, err
 	}
-	rid, err := idNumerico(idReporte)
+	f, err := s.reporteActivo(idReporte)
 	if err != nil {
 		return 0, nil, err
 	}
-
-	var f filaReporte
-	if err := s.api.Get("reportes/"+strconv.Itoa(rid), nil, &f); err != nil {
-		return 0, nil, err
-	}
-	if f.Id == 0 || !f.Activo || f.IdUsuarios != uid {
+	if f.IdUsuarios != uid {
 		return 0, nil, models.NoEncontrado("ese reporte")
 	}
-	return uid, &f, nil
+	return uid, f, nil
+}
+
+// reporteActivo lee un reporte sin mirar de quien es. Lo usa la vista de
+// soporte y, con la comprobacion de dueno, la del usuario.
+func (s *Soporte) reporteActivo(idReporte string) (*filaReporte, error) {
+	rid, err := idNumerico(idReporte)
+	if err != nil {
+		return nil, err
+	}
+	var f filaReporte
+	if err := s.api.Get("reportes/"+strconv.Itoa(rid), nil, &f); err != nil {
+		return nil, err
+	}
+	if f.Id == 0 || !f.Activo {
+		return nil, models.NoEncontrado("ese reporte")
+	}
+	return &f, nil
 }
 
 // aReporte pasa una fila de Soporte_API a la forma del front. Si el catalogo
@@ -246,4 +279,101 @@ func idNumerico(id string) (int, error) {
 		return 0, models.Validacion("El id no es valido.")
 	}
 	return n, nil
+}
+
+// ---- Vista de soporte (AdminSoporteController) ----
+//
+// Reciben el ctx de la peticion como el resto de servicios del admin. Si el
+// cliente ya se fue no se llama a Soporte_API.
+
+// Todos lista los reportes activos de todos los usuarios, del mas nuevo al
+// mas viejo.
+func (s *Soporte) Todos(ctx context.Context) ([]models.Reporte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	params := url.Values{
+		"query":  {Filtro(map[string]string{"Activo": "true"})},
+		"sortby": {"CreadoEn"},
+		"order":  {"desc"},
+		"limit":  {"500"},
+	}
+	var filas []filaReporte
+	if err := s.api.Get("reportes", params, &filas); err != nil {
+		return nil, err
+	}
+
+	reportes := make([]models.Reporte, 0, len(filas))
+	for _, f := range filas {
+		reportes = append(reportes, aReporte(f))
+	}
+	return reportes, nil
+}
+
+// MensajesAdmin devuelve el hilo de cualquier reporte. Desde soporte, lo "mio"
+// es todo lo que no escribio el usuario que abrio el reporte.
+func (s *Soporte) MensajesAdmin(ctx context.Context, idReporte string) ([]models.MensajeReporte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rep, err := s.reporteActivo(idReporte)
+	if err != nil {
+		return nil, err
+	}
+	return s.hilo(rep.Id, func(f filaMensaje) bool { return f.IdRemitente != rep.IdUsuarios })
+}
+
+// ResponderComoSoporte agrega un mensaje al reporte a nombre del agente.
+func (s *Soporte) ResponderComoSoporte(ctx context.Context, idAgente, idReporte, texto string) (*models.MensajeReporte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	texto, err := textoMensaje(texto)
+	if err != nil {
+		return nil, err
+	}
+	aid, err := idNumerico(idAgente)
+	if err != nil {
+		return nil, err
+	}
+	rep, err := s.reporteActivo(idReporte)
+	if err != nil {
+		return nil, err
+	}
+	return s.publicar(rep, aid, texto)
+}
+
+// CambiarEstado mueve el reporte a otro estado del contexto reporte
+// (abierto, en_revision, cerrado...).
+func (s *Soporte) CambiarEstado(ctx context.Context, idReporte, estado string) (*models.Reporte, error) {
+	estado = strings.TrimSpace(estado)
+	if estado == "" {
+		return nil, models.Validacion("Falta el estado.").ConCampo("estado", "Obligatorio.")
+	}
+	idEstado, err := buscarID(ctx, "estados", contextoReporte, estado)
+	if err != nil {
+		return nil, models.Validacion("Ese estado de reporte no existe.").ConCampo("estado", "Valor no valido.")
+	}
+	rep, err := s.reporteActivo(idReporte)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.api.Fijar("reportes", rep.Id, map[string]any{"IdEstado": idEstado}); err != nil {
+		return nil, err
+	}
+	rep.IdEstado = idEstado
+	r := aReporte(*rep)
+	return &r, nil
+}
+
+// Retirar desactiva el reporte. La fila no se borra para no perder el hilo.
+func (s *Soporte) Retirar(ctx context.Context, idReporte string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	rep, err := s.reporteActivo(idReporte)
+	if err != nil {
+		return err
+	}
+	return s.api.Fijar("reportes", rep.Id, map[string]any{"Activo": false})
 }
