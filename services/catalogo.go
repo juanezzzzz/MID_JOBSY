@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -101,7 +102,7 @@ func ListarCatalogo(tabla, contexto string) ([]models.ItemCatalogo, error) {
 	if !ok {
 		return nil, ErrTablaNoExiste
 	}
-	items, err := traerTabla(recurso)
+	items, err := traerTabla(context.Background(), recurso)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +128,7 @@ func ListarCatalogo(tabla, contexto string) ([]models.ItemCatalogo, error) {
 	return filtrados, nil
 }
 
-func traerTabla(recurso string) ([]models.ItemCatalogo, error) {
+func traerTabla(ctx context.Context, recurso string) ([]models.ItemCatalogo, error) {
 	cacheMu.RLock()
 	guardada, hay := cache[recurso]
 	cacheMu.RUnlock()
@@ -135,7 +136,7 @@ func traerTabla(recurso string) ([]models.ItemCatalogo, error) {
 		return guardada.items, nil
 	}
 
-	items, err := pedirACatalogo(recurso)
+	items, err := pedirACatalogo(ctx, recurso)
 	if err != nil {
 		// Si ya habia datos se siguen usando, es mejor que dejar al front
 		// sin listas porque el CRUD se cayo un momento.
@@ -152,7 +153,7 @@ func traerTabla(recurso string) ([]models.ItemCatalogo, error) {
 	return items, nil
 }
 
-func pedirACatalogo(recurso string) ([]models.ItemCatalogo, error) {
+func pedirACatalogo(ctx context.Context, recurso string) ([]models.ItemCatalogo, error) {
 	// tamano_inmueble es un catalogo pero lo sirve Empleo_API, no Catalogo_api
 	servicio, llave, porDefecto := "catalogo", "url_catalogo", "http://localhost:8084"
 	if recurso == "tamano_inmueble" {
@@ -162,7 +163,11 @@ func pedirACatalogo(recurso string) ([]models.ItemCatalogo, error) {
 	// Beego trae 10 filas por defecto, con eso se quedarian estados por fuera
 	url := fmt.Sprintf("%s/v1/%s?limit=500", base, recurso)
 
-	resp, err := cliente.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, models.Interno(err)
+	}
+	resp, err := cliente.Do(req)
 	if err != nil {
 		return nil, models.Upstream(servicio, err)
 	}
@@ -179,8 +184,8 @@ func pedirACatalogo(recurso string) ([]models.ItemCatalogo, error) {
 }
 
 // buscarID encuentra el id de una fila por nombre (y contexto si aplica).
-func buscarID(recurso, contexto, nombre string) (int, error) {
-	items, err := traerTabla(recurso)
+func buscarID(ctx context.Context, recurso, contexto, nombre string) (int, error) {
+	items, err := traerTabla(ctx, recurso)
 	if err != nil {
 		return 0, err
 	}
@@ -197,8 +202,8 @@ func buscarID(recurso, contexto, nombre string) (int, error) {
 }
 
 // buscarNombre es el camino inverso: del id al nombre.
-func buscarNombre(recurso string, id int) (string, error) {
-	items, err := traerTabla(recurso)
+func buscarNombre(ctx context.Context, recurso string, id int) (string, error) {
+	items, err := traerTabla(ctx, recurso)
 	if err != nil {
 		return "", err
 	}
@@ -218,12 +223,12 @@ func IDModalidad(modalidad string) (int, error) {
 	if !ok {
 		return 0, ErrModalidadSinPareja
 	}
-	return buscarID("modalidades_trabajo", "", nombreBase)
+	return buscarID(context.Background(), "modalidades_trabajo", "", nombreBase)
 }
 
 // ModalidadDesdeID pasa el id de la base a la modalidad que entiende el front.
 func ModalidadDesdeID(id int) (string, error) {
-	nombre, err := buscarNombre("modalidades_trabajo", id)
+	nombre, err := buscarNombre(context.Background(), "modalidades_trabajo", id)
 	if err != nil {
 		return "", err
 	}
@@ -237,30 +242,30 @@ func ModalidadDesdeID(id int) (string, error) {
 // IDEstado busca un estado dentro de su contexto (oferta, postulacion,
 // contratacion, pedido...). El mismo nombre se repite entre contextos.
 func IDEstado(contexto, nombre string) (int, error) {
-	return buscarID("estados", contexto, nombre)
+	return buscarID(context.Background(), "estados", contexto, nombre)
 }
 
 func EstadoDesdeID(id int) (string, error) {
-	return buscarNombre("estados", id)
+	return buscarNombre(context.Background(), "estados", id)
 }
 
 // IDTipo busca un tipo dentro de su contexto (pago, producto_tienda,
 // notificacion...).
 func IDTipo(contexto, nombre string) (int, error) {
-	return buscarID("tipos", contexto, nombre)
+	return buscarID(context.Background(), "tipos", contexto, nombre)
 }
 
 func TipoDesdeID(id int) (string, error) {
-	return buscarNombre("tipos", id)
+	return buscarNombre(context.Background(), "tipos", id)
 }
 
 // IDDiaSemana recibe el codigo corto del dia ("lun", "mar"...).
 func IDDiaSemana(codigo string) (int, error) {
-	return buscarID("dias_semana", "", codigo)
+	return buscarID(context.Background(), "dias_semana", "", codigo)
 }
 
 func DiaSemanaDesdeID(id int) (string, error) {
-	return buscarNombre("dias_semana", id)
+	return buscarNombre(context.Background(), "dias_semana", id)
 }
 
 // IDTamano pasa tamano + esLujo al id de tamano_inmueble. Si es de lujo
@@ -268,17 +273,17 @@ func DiaSemanaDesdeID(id int) (string, error) {
 // "lujoso" directo porque asi lo tipa el front en job.model.ts.
 func IDTamano(tamano string, esLujo bool) (int, error) {
 	if esLujo || tamano == "lujoso" {
-		return buscarID("tamano_inmueble", "", "lujoso")
+		return buscarID(context.Background(), "tamano_inmueble", "", "lujoso")
 	}
 	if !tamanosValidos[tamano] {
 		return 0, ErrTamanoSinPareja
 	}
-	return buscarID("tamano_inmueble", "", tamano)
+	return buscarID(context.Background(), "tamano_inmueble", "", tamano)
 }
 
 // TamanoDesdeID devuelve el tamano y si es de lujo por separado.
 func TamanoDesdeID(id int) (string, bool, error) {
-	nombre, err := buscarNombre("tamano_inmueble", id)
+	nombre, err := buscarNombre(context.Background(), "tamano_inmueble", id)
 	if err != nil {
 		return "", false, err
 	}
@@ -287,4 +292,39 @@ func TamanoDesdeID(id int) (string, bool, error) {
 		return "", false, ErrTamanoSinPareja
 	}
 	return t.tamano, t.esLujo, nil
+}
+
+// ---- Catalogo para los servicios del mid ----
+
+// Catalogo es lo que reciben tienda, pagos y carrito para traducir nombres a
+// ids. Usa la misma cache que el resto del archivo, solo que respeta el ctx
+// de la peticion para no quedarse esperando si el cliente ya se fue.
+type Catalogo struct{}
+
+func NuevoCatalogo() *Catalogo {
+	return &Catalogo{}
+}
+
+func (c *Catalogo) IDEstado(ctx context.Context, contexto, nombre string) (int, error) {
+	return buscarID(ctx, "estados", contexto, nombre)
+}
+
+func (c *Catalogo) EstadoDesdeID(ctx context.Context, id int) (string, error) {
+	return buscarNombre(ctx, "estados", id)
+}
+
+func (c *Catalogo) IDTipo(ctx context.Context, contexto, nombre string) (int, error) {
+	return buscarID(ctx, "tipos", contexto, nombre)
+}
+
+func (c *Catalogo) TipoDesdeID(ctx context.Context, id int) (string, error) {
+	return buscarNombre(ctx, "tipos", id)
+}
+
+func (c *Catalogo) IDDiaSemana(ctx context.Context, codigo string) (int, error) {
+	return buscarID(ctx, "dias_semana", "", codigo)
+}
+
+func (c *Catalogo) DiaSemanaDesdeID(ctx context.Context, id int) (string, error) {
+	return buscarNombre(ctx, "dias_semana", id)
 }
