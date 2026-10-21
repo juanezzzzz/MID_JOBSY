@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -350,39 +349,39 @@ func (s *Tienda) idCategoria(ctx context.Context, nombre string) (int, error) {
 // De todo esto solo se confia en el id. El precio y el stock se releen de la
 // base en el checkout, porque lo que llega del cliente pudo caducar o estar
 // manipulado.
-
 type ProductoCliente struct {
-	ID string `json:"id"`
-	SKU string `json:"sku, omitempty"`
-	Nombre string `json:"nombre, omitempty"`
-	Categoria string `json:"categoria, omitempty"`
-	Descripcion string `json:"descripcion, omitempty"`
-	Precio float64 `json:"precio, omitempty"`
-	Moneda string `json:"moneda, omitempty"`
-	Stock int `json:"stock, omitempty"`
-	ImagenURL string `json:"imagenUrl, omitempty"`
-	Calificacion float64 `json:"calificacion, omitempty"`
+	ID           string  `json:"id"`
+	SKU          string  `json:"sku,omitempty"`
+	Nombre       string  `json:"nombre,omitempty"`
+	Categoria    string  `json:"categoria,omitempty"`
+	Descripcion  string  `json:"descripcion,omitempty"`
+	Precio       float64 `json:"precio,omitempty"`
+	Moneda       string  `json:"moneda,omitempty"`
+	Stock        int     `json:"stock,omitempty"`
+	ImagenURL    string  `json:"imagenUrl,omitempty"`
+	Calificacion float64 `json:"calificacion,omitempty"`
+	Estado       string  `json:"estado,omitempty"`
 }
 
 type ItemCarrito struct {
-	Producto ProductoCliente `json:"producto"`
-	Cantidad int `json:"cantidad"`
+	Producto ProductoCliente `json:"product"`
+	Cantidad int             `json:"cantidad"`
 }
+
 // PeticionCheckout es el cuerpo de POST /tienda/pedidos.
 //
 // Los campos del instrumento de pago son opcionales porque no todos los
 // metodos los usan: una tarjeta necesita titular y ultimos digitos, PSE
 // necesita el banco, y el saldo interno no necesita nada.
-
 type PeticionCheckout struct {
-	Items []ItemCarrito `json:"items"`
-	MetodoPago string `json:"metodopago"`
-	Cupon string `json:"cupon, omitempty"`
-	Titular string `json:"titular, omitempty"`
-	Ultimos4 string `json:"ultimos4, omitempty"`
-	Banco string `json:"banco, omitempty"`
-	TipoCuenta string `json:"tipocuenta, omitempty"`
-	Correo string `json:"correo, omitempty"`
+	Items      []ItemCarrito `json:"items"`
+	MetodoPago string        `json:"metodoPago"`
+	Cupon      string        `json:"cupon,omitempty"`
+	Titular    string        `json:"titular,omitempty"`
+	Ultimos4   string        `json:"ultimos4,omitempty"`
+	Banco      string        `json:"banco,omitempty"`
+	TipoCuenta string        `json:"tipoCuenta,omitempty"`
+	Correo     string        `json:"correo,omitempty"`
 }
 
 const envioFijo = 8000.0
@@ -392,88 +391,82 @@ const envioFijo = 8000.0
 // El precio NUNCA se toma del cliente: se relee de la base. El carrito del
 // frontend vive en localStorage con el producto entero embebido, asi que su
 // precio puede estar caducado o manipulado.
-
-
-func (s *Tienda) Checkout (ctx context.Context, idUsuario string, p PeticionChekout) (*models.Pedido, error){
+func (s *Tienda) Checkout(ctx context.Context, idUsuario string, p PeticionCheckout) (*models.Pedido, error) {
 	usuario, err := IDNumerico(idUsuario)
 	if err != nil {
-		return nil, err 
+		return nil, err
 	}
 	if len(p.Items) == 0 {
 		return nil, models.Validacion("El carrito esta vacio.")
 	}
-	if strings. TrimSpace (p.Metodopago) == "" {
-		return nil, models.Validacion("Falta el metodo de pago.") .ConCampo("metodoPago", "Obligarorio.")
+	if strings.TrimSpace(p.MetodoPago) == "" {
+		return nil, models.Validacion("Falta el metodo de pago.").ConCampo("metodoPago", "Obligatorio.")
 	}
 
 	type linea struct {
-		prod filaProducto
+		prod     filaProducto
 		cantidad int
 	}
 	lineas := make([]linea, 0, len(p.Items))
 	subtotal := 0.0
 
-	for _, item := range p.Items {
-		if it.Cantidad <= 0{
-			return nil, models.Validacion("Las cantidades deben ser mayores que cero. ")
+	for _, it := range p.Items {
+		if it.Cantidad <= 0 {
+			return nil, models.Validacion("Las cantidades deben ser mayores que cero.")
 		}
 		id, err := IDNumerico(it.Producto.ID)
-		if err != nil{
-			return nil, models,Validacion("Hay un producto invalido en el carrito.")
+		if err != nil {
+			return nil, models.Validacion("Hay un producto invalido en el carrito.")
 		}
+
+		var filas []filaProducto
+		o := &OpcionesUpstream{Query: map[string][]string{}}
+		o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id)}))
+		o.Query.Set("limit", "1")
+		if err := s.tienda.Get(ctx, "productos", o, &filas); err != nil {
+			return nil, err
+		}
+		if len(filas) == 0 || !filas[0].Activo {
+			return nil, models.Validacion(fmt.Sprintf("El producto %s ya no esta disponible.", it.Producto.ID))
+		}
+		prod := filas[0]
+		if prod.Stock < it.Cantidad {
+			return nil, models.Conflicto(fmt.Sprintf(
+				"No hay stock suficiente de %q: quedan %d.", prod.Nombre, prod.Stock))
+		}
+
+		lineas = append(lineas, linea{prod: prod, cantidad: it.Cantidad})
+		subtotal += prod.Precio * float64(it.Cantidad)
 	}
 
-	var filas []filaProducto
-	o := &OpcionesUpstream{Query: map[string][]string{}}
-	o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id)}))
-	o.Query.Set("limit", "1")
-	if err := s.tienda.Get(ctx, "productos", o, &filas); err !=nil {
-		return nil, err
-	}
-	if len(filas) == 0 || !filas[0].Activo{
-		return nil, models.NoEncontrado(fmt.Sprintf("el producto %s ya no esta disponible.", it.producto.ID))
+	// El cupon se resuelve contra el subtotal ya calculado con precios de la
+	// base, nunca contra el que mande el cliente.
+	descuento := 0.0
+	var idCupon int
+	if strings.TrimSpace(p.Cupon) != "" {
+		c, err := s.ValidarCupon(ctx, p.Cupon, subtotal)
+		if err != nil {
+			return nil, err
+		}
+		descuento = c.Descuento
+		idCupon, _ = strconv.Atoi(c.ID)
 	}
 
-	prod := filas[0]
-	if prod.Stock < it.Cantidad {
-		return nil, models.Conflicto(fmt.Sprintf("No hay stock suficente de %q: quedan %d.", prod.Nombre, prod.Stock))
-	}
-	lineas = append(lineas, linea{prod: prod, cantidad: it.Cantidad})
-	subtotal += prod.Precio * float64(it.Cantidad)
-}
-
-// El cupon se resuelve contra el subtotal ya calculado con precios de la
-// base, nunca contra el que mande el cliente.
-
-descuento := 0.0
-var idCupon int
-if string.TrimSpace(p.Cupon) != "" {
-	c, err := s.ValidarCupon(ctx, p.Cupon, subtotal)
+	idEstadoCarrito, err := s.catalogo.IDEstado(ctx, "carrito", "pagado")
 	if err != nil {
 		return nil, err
 	}
-	descuento = c.Descuento
-	idCupon, _= strconv.Atoi(c.ID)
-}
+	idEstadoPedido, err := s.catalogo.IDEstado(ctx, "pedido", "pendiente")
+	if err != nil {
+		return nil, err
+	}
 
-idEstadoCarrito, err := s.catalogo.IDEstado(ctx, "carrito", "pagado")
-if err != nil {
-	return nil, err
-}
-
-idEstadoPedido, err := s.catalogo.IDEstado(ctx, "pedido", "pendiente")
-if err != nil {
-	return nil, err
-}
-
-// facturacion exige un carrito por clave foranea, asi que se crea uno ya
-// cerrado para dejar el pedido bien enlazado.
-
-Var carrito strut{
-	Id int `json:"Id"`
-}
-
-if err := s.tienda.Post(ctx, "carritos", map[string]any{
+	// facturacion exige un carrito por clave foranea, asi que se crea uno ya
+	// cerrado para dejar el pedido bien enlazado.
+	var carrito struct {
+		Id int `json:"Id"`
+	}
+	if err := s.tienda.Post(ctx, "carritos", map[string]any{
 		"IdUsuarios": usuario,
 		"IdEstado":   idEstadoCarrito,
 		"Activo":     false,
@@ -866,30 +859,29 @@ func (s *Tienda) AdminCrearProducto(ctx context.Context, p PeticionProducto) (*m
 	if err != nil {
 		return nil, err
 	}
-
 	f := map[string]any{
-		"IdTipo": idTipo,
-		"Descripcion": "",
+		"IdTipo":         idTipo,
+		"Descripcion":    "",
 		"PrecioOriginal": 0,
-		"DescuentoPct": 0,
-		"Stock": 0,
-		"ImagenUrl": "",
-		"EsNuevo": true,
-		"Destacado": false,
-		"EnvioGratis": false,
+		"DescuentoPct":   0,
+		"Stock":          0,
+		"ImagenUrl":      "",
+		"EsNuevo":        true,
+		"Destacado":      false,
+		"EnvioGratis":    false,
 		"RatingPromedio": 0,
-		"TotalResenas": 0,
-		"Activo": false,
+		"TotalResenas":   0,
+		"Activo":         false,
 	}
 	if p.Estado == nil {
-		borrado := "borrador"
+		borrador := "borrador"
 		p.Estado = &borrador
 	}
 	if err := s.volcar(ctx, f, p); err != nil {
 		return nil, err
 	}
 	var creado filaProducto
-	if err := mapToStruct(creado, &creado); err != nil{
+	if err := s.tienda.Post(ctx, "productos", f, &creado); err != nil {
 		return nil, err
 	}
 	return s.productoAdmin(ctx, creado.Id)
@@ -1180,75 +1172,73 @@ func (s *Tienda) Reembolsar(ctx context.Context, idPedido, motivo string) (*Resu
 	res.StockRepuesto = s.reponerStockDe(ctx, id) == nil
 	return res, nil
 }
-// pedidoPorID lee un pedido activo.
 
-func (s *Tienda) pedidoporID(ctx context.Context, id int) (*filaPedido, error){
+// pedidoPorID lee un pedido activo.
+func (s *Tienda) pedidoPorID(ctx context.Context, id int) (*filaPedido, error) {
 	var filas []filaPedido
 	o := &OpcionesUpstream{Query: map[string][]string{}}
-	o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id), "Activo": "true"}))
+	o.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id)}))
 	o.Query.Set("limit", "1")
 	if err := s.tienda.Get(ctx, "facturacion", o, &filas); err != nil {
 		return nil, err
 	}
 	if len(filas) == 0 || !filas[0].Activo {
 		return nil, models.NoEncontrado("ese pedido")
-
 	}
 	return &filas[0], nil
 }
 
-
 // pagoDePedido busca el cobro aprobado de un pedido.
-func (s *Tienda) pagoDePedido(ctx context.Context, idPedido int) (*filaPago, error){
+func (s *Tienda) pagoDePedido(ctx context.Context, idPedido int) (*filaPago, error) {
 	var filas []filaPago
-	o := OpcionesUpstream{Query: map[string][]string{}}
-	o.Query.Set("query", QueryBeego(map[string]string{"IdPedidos": strconv.Itoa(idPedido), "Estado": "aprobado"}))
-	
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{
+		"IdPedidos": strconv.Itoa(idPedido),
+		"Activo":    "true",
+	}))
 	o.Query.Set("limit", "20")
 	o.Query.Set("sortby", "Id")
 	o.Query.Set("order", "desc")
-	if err := s.tienda.Get(ctx, "pagos", 0, &filas); err != nil {
+	if err := s.tienda.Get(ctx, "pagos", o, &filas); err != nil {
 		return nil, err
 	}
 	for i := range filas {
 		n, err := s.catalogo.EstadoDesdeID(ctx, filas[i].IdEstado)
-		if err != nil && n == "aprobado"{
-			return &filas[i], nil 
+		if err == nil && n == "aprobado" {
+			return &filas[i], nil
 		}
 	}
 	return nil, nil
 }
 
 // reponerStockDe devuelve al catalogo las unidades de un pedido.
-func (s *Tienda) responerStockDe(ctx context.Context, idPedido int) error {
-	var lineas[]filaPedidoItem
+func (s *Tienda) reponerStockDe(ctx context.Context, idPedido int) error {
+	var lineas []filaPedidoItem
 	o := &OpcionesUpstream{Query: map[string][]string{}}
 	o.Query.Set("query", QueryBeego(map[string]string{"IdPedidos": strconv.Itoa(idPedido)}))
 	o.Query.Set("limit", "200")
-	if err := s.tienda.Get(ctx, "pedido_items", o, &lineas); err != nil{
-		slog.Error("no se puede leer las lineas para reponer stock", "pedido", idPedido, "error", err)
+	if err := s.tienda.Get(ctx, "pedido_items", o, &lineas); err != nil {
+		slog.Error("no se pudo leer las lineas para reponer stock", "pedido", idPedido, "error", err)
 		return err
 	}
-
 	var fallo error
-	for _, l := ranger lineas{
+	for _, l := range lineas {
 		if l.IdProductos == nil {
 			continue
 		}
-		//se suma sobre el valor actual, no sobre el que habia al comprar:
+		// Se suma sobre el valor actual, no sobre el que habia al comprar:
 		// entre medias el stock pudo cambiar por otras ventas.
-
-		if _, err : s.actualizarProducto(ctx, l.IdProdcutos.Id, func(f map[string]any)error {
+		if _, err := s.actualizarProducto(ctx, l.IdProductos.Id, func(f map[string]any) error {
 			actual, _ := f["Stock"].(float64)
-			f["stock"] = int (acutal) + l.Cantidad
+			f["Stock"] = int(actual) + l.Cantidad
 			return nil
 		}); err != nil {
 			slog.Error("no se pudo reponer el stock de un producto",
 				"pedido", idPedido, "producto", l.IdProductos.Id, "error", err)
-				fallo = err
+			fallo = err
 		}
 	}
-
-	return fallo 
+	return fallo
 }
 
+// DevolverDinero manda la devolucion por donde entro el cobro.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"jobsy_mid/models"
+	"api_MID/models"
 )
 
 // Pagos registra los cobros y su rastro contable.

@@ -1,75 +1,90 @@
 package services
 
 import (
-	"container/list"
 	"context"
-	"internal/strconv"
+	"fmt"
+	"strconv"
 	"sync"
 
-	"MID_JOBSY/models"
+	"api_MID/models"
 )
 
+// Monedero gestiona el saldo interno de Jobsy.
+//
+// La tabla tienda.saldo_jobsy existe y su endpoint permite hoy fijar cualquier
+// saldo con un PUT sin autenticacion. Aqui el saldo solo se mueve por abono o
+// por cargo, cada movimiento deja rastro en tienda.transacciones, y nunca
+// puede quedar negativo.
+//
+// LIMITACION IMPORTANTE: el backend no ofrece transacciones de base de datos,
+// asi que leer-el-saldo y escribirlo son dos llamadas separadas. Entre ambas
+// cabe otra operacion del mismo usuario. El bloqueo por usuario de abajo cierra
+// esa ventana mientras haya una sola instancia del middleware; con varias
+// instancias hara falta un bloqueo compartido o, mejor, mover el descuento a
+// una sentencia atomica en la base.
 type Monedero struct {
 	tienda *ClienteUpstream
 
-	// bloqueos serializa las operaciones sobre el mismo monedero
-	mu sync.Mutex
-	bloqueos map [int]*sync.Mutex
+	// bloqueos serializa las operaciones sobre el mismo monedero.
+	mu       sync.Mutex
+	bloqueos map[int]*sync.Mutex
 }
 
 // NuevoMonedero crea el monedero (saldo Jobsy) sobre el upstream de tienda.
+func NuevoMonedero(t *ClienteUpstream) *Monedero {
+	return &Monedero{tienda: t, bloqueos: map[int]*sync.Mutex{}}
+}
 
+// bloqueoDe devuelve el mutex del usuario, creandolo si no existe, para que dos
+// movimientos del mismo saldo no se pisen.
 func (m *Monedero) bloqueoDe(idUsuario int) *sync.Mutex {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if l, ok := m.bloqueos[idUsuario]; ok {
 		return l
 	}
-
 	l := &sync.Mutex{}
-	m.bloqueos[idUsuario] = 1
+	m.bloqueos[idUsuario] = l
 	return l
 }
 
-type filaSaldo struct{
-	Id int `json:"id"`
-	IdUsuarios int `json:"idusuarios"`
-	SaldoDisponible float64 `json:"saldodisponible"`
-	TotalGanado float64 `json:"totalganado`
-	TotalRetirado float64 `json:"totalretirado"`
-	Activo bool `json:"activo`
+type filaSaldo struct {
+	Id              int     `json:"Id"`
+	IdUsuarios      int     `json:"IdUsuarios"`
+	SaldoDisponible float64 `json:"SaldoDisponible"`
+	TotalGanado     float64 `json:"TotalGanado"`
+	TotalRetirado   float64 `json:"TotalRetirado"`
+	Activo          bool    `json:"Activo"`
 }
 
-//saldo describe el monedero tal como lo ve el frontend
-
-type saldo struct{
-	Disponible float64 `json:"disponible"`
-	TotalGanado float64 `json:"totalganado"`
-	TotalRetirado float64 `json:"totalretirado"`
-	Moneda string `json:"moneda"`
+// Saldo describe el monedero tal como lo ve el frontend.
+type Saldo struct {
+	Disponible    float64 `json:"disponible"`
+	TotalGanado   float64 `json:"totalGanado"`
+	TotalRetirado float64 `json:"totalRetirado"`
+	Moneda        string  `json:"moneda"`
 }
 
-//Devuelve el saldo del usuario, creado en el monedero si aun no existe-
-func (m *Monedero) De(ctx context.Context, idUsuario string) (*Saldo, error){
+// De devuelve el saldo del usuario, creando el monedero si aun no existe.
+func (m *Monedero) De(ctx context.Context, idUsuario string) (*Saldo, error) {
 	id, err := IDNumerico(idUsuario)
-	if err != nil{
+	if err != nil {
 		return nil, err
 	}
-	f, err := m.obtener0Crear(ctx, id)
-	if err != nil{
+	f, err := m.obtenerOCrear(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-
-	return  &Saldo{
-		Disponible: f.SaldoDisponible,
-		TotalGanado: f.TotalGanado,
+	return &Saldo{
+		Disponible:    f.SaldoDisponible,
+		TotalGanado:   f.TotalGanado,
 		TotalRetirado: f.TotalRetirado,
-		Moneda: "COP",
+		Moneda:        "COP",
 	}, nil
 }
 
-// obtenerOCrear devuelve el saldo activo del usuario y, si no tiene, le crea uno en cero
-
+// obtenerOCrear devuelve el saldo activo del usuario y, si no tiene, le crea
+// uno en cero.
 func (m *Monedero) obtenerOCrear(ctx context.Context, idUsuario int) (*filaSaldo, error) {
 	var filas []filaSaldo
 	o := &OpcionesUpstream{Query: map[string][]string{}}
@@ -101,16 +116,16 @@ func (m *Monedero) obtenerOCrear(ctx context.Context, idUsuario int) (*filaSaldo
 	return &creado, nil
 }
 
-//escribe guarda los importes del monedero 
-func (m *Monedero) escribir(ctx context.Context, f *filaSaldo) error{
-	return  m.tienda.Fijar(ctx, "saldo_jobsy/"+strconv.Itoa(f.Id),map[string]any{
+// escribir guarda los importes del monedero.
+func (m *Monedero) escribir(ctx context.Context, f *filaSaldo) error {
+	return m.tienda.Fijar(ctx, "saldo_jobsy/"+strconv.Itoa(f.Id), map[string]any{
 		"SaldoDisponible": f.SaldoDisponible,
-		"TotalGanado": f.TotalGanado,
-		"TotalRetirado": f.TotalRetirado,
+		"TotalGanado":     f.TotalGanado,
+		"TotalRetirado":   f.TotalRetirado,
 	})
-
 }
 
+// Abonar suma dinero al monedero.
 func (m *Monedero) Abonar(ctx context.Context, idUsuario int, monto float64, concepto string) error {
 	if monto <= 0 {
 		return models.Validacion("El monto a abonar debe ser mayor que cero.")
