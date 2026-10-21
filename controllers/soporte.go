@@ -2,80 +2,72 @@ package controllers
 
 import (
 	"net/http"
-
-	"api_MID/services"
 )
 
-// soporte es el servicio que usa este controlador. Beego crea un controlador
-// nuevo en cada peticion, asi que la dependencia se fija una vez al arrancar
-// con ConfigurarSoporte.
-var soporte *services.Soporte
-
-// ConfigurarSoporte deja listo el servicio de soporte. Se llama desde main.
-func ConfigurarSoporte(s *services.Soporte) {
-	soporte = s
-}
-
-// SoporteController atiende los reportes del propio usuario. Embebe
-// SesionController, asi que todas sus rutas exigen sesion.
+// SoporteController atiende los reportes del propio usuario.
 type SoporteController struct {
 	SesionController
 }
 
-// MisReportes lista los reportes del usuario. GET /api/soporte/reportes.
+// MisReportes lista los reportes abiertos por el propio usuario.
+// GET /api/soporte/reportes.
 func (c *SoporteController) MisReportes() {
 	id, err := c.UsuarioActual()
 	if err != nil {
 		c.Fallo(err)
 		return
 	}
-	reportes, err := soporte.MisReportes(id)
+	items, err := svc.Soporte.Mios(c.Contexto(), id)
 	if err != nil {
 		c.Fallo(err)
 		return
 	}
-	c.Responder(http.StatusOK, reportes)
+	c.Responder(http.StatusOK, items)
 }
 
-// CrearReporte abre un reporte nuevo. Responde 201 con el reporte.
-// POST /api/soporte/reportes.
+// CrearReporte abre un reporte nuevo (tipo, asunto, descripcion) a nombre del
+// usuario del token y responde 201. POST /api/soporte/reportes.
 func (c *SoporteController) CrearReporte() {
 	id, err := c.UsuarioActual()
 	if err != nil {
 		c.Fallo(err)
 		return
 	}
-	var p services.PeticionReporte
+	var p struct {
+		Tipo        string `json:"tipo"`
+		Asunto      string `json:"asunto"`
+		Descripcion string `json:"descripcion"`
+	}
 	if err := c.LeerJSON(&p); err != nil {
 		c.Fallo(err)
 		return
 	}
-	reporte, err := soporte.CrearReporte(id, p)
+	rep, err := svc.Soporte.Crear(c.Contexto(), id, p.Tipo, p.Asunto, p.Descripcion)
 	if err != nil {
 		c.Fallo(err)
 		return
 	}
-	c.Responder(http.StatusCreated, reporte)
+	c.Responder(http.StatusCreated, rep)
 }
 
-// Mensajes devuelve el hilo de un reporte del usuario.
-// GET /api/soporte/reportes/:id/mensajes.
-func (c *SoporteController) Mensajes() {
+// MensajesReporte devuelve la conversacion de un reporte del usuario. El
+// servicio comprueba que el reporte sea suyo. GET /api/soporte/reportes/:id/mensajes.
+func (c *SoporteController) MensajesReporte() {
 	id, err := c.UsuarioActual()
 	if err != nil {
 		c.Fallo(err)
 		return
 	}
-	mensajes, err := soporte.Mensajes(id, c.ParamID())
+	items, err := svc.Soporte.Mensajes(c.Contexto(), id, c.ParamID())
 	if err != nil {
 		c.Fallo(err)
 		return
 	}
-	c.Responder(http.StatusOK, mensajes)
+	c.Responder(http.StatusOK, items)
 }
 
-// ResponderReporte agrega un mensaje del usuario a su reporte. Responde 201.
-// POST /api/soporte/reportes/:id/mensajes.
+// ResponderReporte agrega un mensaje del usuario a su propio reporte y
+// responde 201. POST /api/soporte/reportes/:id/mensajes.
 func (c *SoporteController) ResponderReporte() {
 	id, err := c.UsuarioActual()
 	if err != nil {
@@ -89,10 +81,10 @@ func (c *SoporteController) ResponderReporte() {
 		c.Fallo(err)
 		return
 	}
-	mensaje, err := soporte.Responder(id, c.ParamID(), p.Texto)
+	m, err := svc.Soporte.Responder(c.Contexto(), id, c.ParamID(), p.Texto)
 	if err != nil {
 		c.Fallo(err)
 		return
 	}
-	c.Responder(http.StatusCreated, mensaje)
+	c.Responder(http.StatusCreated, m)
 }
