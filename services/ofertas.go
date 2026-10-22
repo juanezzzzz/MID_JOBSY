@@ -187,21 +187,20 @@ func (s *Ofertas) Listar(ctx context.Context, f models.FiltrosOferta) (models.Pa
 		filtros["IdEstado"] = strconv.Itoa(idActiva)
 	}
 
+	// Se leen todas las ofertas vigentes y se pagina despues de filtrar. Antes
+	// se paginaba en el upstream y se filtraba la pagina: el total era el de
+	// esa pagina (la portada decia "1 empleo") y una pagina podia salir casi
+	// vacia aunque hubiera mas resultados. Convertir una oferta solo consulta
+	// el catalogo en cache, asi que leerlas todas es barato.
 	o := &OpcionesUpstream{Query: map[string][]string{}}
 	o.Query.Set("query", QueryBeego(filtros))
-	o.Query.Set("limit", strconv.Itoa(tamanoPag+1))
-	o.Query.Set("offset", strconv.Itoa((pagina-1)*tamanoPag))
+	o.Query.Set("limit", strconv.Itoa(maxOfertasListado))
 	o.Query.Set("sortby", "Id")
 	o.Query.Set("order", "desc")
 
 	var filas []filaOferta
 	if err := s.empleo.Get(ctx, "ofertas", o, &filas); err != nil {
 		return vacia, err
-	}
-
-	hayMas := len(filas) > tamanoPag
-	if hayMas {
-		filas = filas[:tamanoPag]
 	}
 
 	items := make([]models.Oferta, 0, len(filas))
@@ -229,9 +228,15 @@ func (s *Ofertas) Listar(ctx context.Context, f models.FiltrosOferta) (models.Pa
 			"descartadas", descartadas, "devueltas", len(items))
 	}
 
-	total := (pagina-1)*tamanoPag + len(items)
-	return models.NuevaPagina(items, pagina, tamanoPag, total, hayMas), nil
+	total := len(items)
+	desde := min((pagina-1)*tamanoPag, total)
+	hasta := min(desde+tamanoPag, total)
+	return models.NuevaPagina(items[desde:hasta], pagina, tamanoPag, total, hasta < total), nil
 }
+
+// maxOfertasListado acota la lectura del buscador. Con mas ofertas vigentes
+// que esto habria que mover los filtros al upstream.
+const maxOfertasListado = 2000
 
 // coincide aplica los filtros que el backend no sabe resolver.
 func coincide(o models.Oferta, f models.FiltrosOferta) bool {

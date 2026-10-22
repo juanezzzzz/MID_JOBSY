@@ -382,6 +382,8 @@ func (s *Soporte) Responder(ctx context.Context, idUsuario, idReporte, texto str
 		ID:    strconv.Itoa(creado.Id),
 		Autor: "usuario",
 		Texto: texto,
+		// Sin fecha el chat pintaba el mensaje recien enviado sin hora.
+		Fecha: time.Now().UTC().Format(time.RFC3339),
 		EsMio: true,
 	}, nil
 }

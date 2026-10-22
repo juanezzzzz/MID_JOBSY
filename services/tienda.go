@@ -271,27 +271,25 @@ func (s *Tienda) Productos(ctx context.Context, categoria string, pagina, tamano
 
 	o := &OpcionesUpstream{Query: map[string][]string{}}
 	o.Query.Set("query", QueryBeego(filtros))
-	o.Query.Set("limit", strconv.Itoa(tamanoPag+1))
-	o.Query.Set("offset", strconv.Itoa((pagina-1)*tamanoPag))
+	// Todos los que cumplen el filtro, para conocer el total real (antes era
+	// el de la pagina); el catalogo de la tienda es pequeno.
+	o.Query.Set("limit", "5000")
 	o.Query.Set("sortby", "Id")
 	o.Query.Set("order", "desc")
 
-	var filas []filaProducto
-	if err := s.tienda.Get(ctx, "productos", o, &filas); err != nil {
+	var todas []filaProducto
+	if err := s.tienda.Get(ctx, "productos", o, &todas); err != nil {
 		return vacia, err
 	}
+	total := len(todas)
+	desde := min((pagina-1)*tamanoPag, total)
+	hasta := min(desde+tamanoPag, total)
 
-	hayMas := len(filas) > tamanoPag
-	if hayMas {
-		filas = filas[:tamanoPag]
-	}
-
-	items := make([]models.Producto, 0, len(filas))
-	for _, f := range filas {
+	items := make([]models.Producto, 0, hasta-desde)
+	for _, f := range todas[desde:hasta] {
 		items = append(items, productoADominio(f))
 	}
-	total := (pagina-1)*tamanoPag + len(items)
-	return models.NuevaPagina(items, pagina, tamanoPag, total, hayMas), nil
+	return models.NuevaPagina(items, pagina, tamanoPag, total, hasta < total), nil
 }
 
 // ProductoPorID devuelve un producto activo por id; los retirados se tratan

@@ -258,20 +258,21 @@ func (s *Empleados) Listar(ctx context.Context, busqueda string, pagina, tamano 
 
 	o := &OpcionesUpstream{Query: map[string][]string{}}
 	o.Query.Set("query", QueryBeego(filtros))
-	o.Query.Set("limit", strconv.Itoa(tamano+1)) // el +1 revela si hay mas
-	o.Query.Set("offset", strconv.Itoa((pagina-1)*tamano))
+	// Se leen todos los usuarios que cumplen el filtro (una sola lectura,
+	// barata) para conocer el total real; el perfil, que es lo costoso, solo
+	// se cruza para la pagina pedida. Antes el total era el de la pagina.
+	o.Query.Set("limit", "5000")
 	o.Query.Set("sortby", "Id")
 	o.Query.Set("order", "desc")
 
-	var filas []filaUsuario
-	if err := s.core.Get(ctx, "usuarios", o, &filas); err != nil {
+	var todas []filaUsuario
+	if err := s.core.Get(ctx, "usuarios", o, &todas); err != nil {
 		return vacia, err
 	}
-
-	hayMas := len(filas) > tamano
-	if hayMas {
-		filas = filas[:tamano]
-	}
+	total := len(todas)
+	desde := min((pagina-1)*tamano, total)
+	hasta := min(desde+tamano, total)
+	filas := todas[desde:hasta]
 
 	// Enriquecer cada usuario con su perfil seria N+1 contra el upstream. Se
 	// hace una sola lectura de perfiles y se cruza en memoria.
@@ -302,8 +303,7 @@ func (s *Empleados) Listar(ctx context.Context, busqueda string, pagina, tamano 
 		items = append(items, e)
 	}
 
-	totalConocido := (pagina-1)*tamano + len(items)
-	return models.NuevaPagina(items, pagina, tamano, totalConocido, hayMas), nil
+	return models.NuevaPagina(items, pagina, tamano, total, hasta < total), nil
 }
 
 // idRolEmpleado resuelve el id del rol "empleado" en core.roles_usuarios.
