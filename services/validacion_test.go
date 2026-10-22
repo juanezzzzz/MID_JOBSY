@@ -3,6 +3,8 @@ package services
 import (
 	"testing"
 	"time"
+
+	"api_MID/models"
 )
 
 func TestValidarDireccion(t *testing.T) {
@@ -117,6 +119,30 @@ func TestCiudadServicio(t *testing.T) {
 	for _, malo := range []string{"Narnia", "", "x"} {
 		if _, err := CiudadServicio("ciudad", malo); err == nil {
 			t.Errorf("deberia rechazar %q", malo)
+		}
+	}
+}
+
+func TestValidarEntrega(t *testing.T) {
+	if validarEntrega(nil) == nil {
+		t.Error("sin datos de entrega deberia fallar")
+	}
+	e := &models.DatosEntrega{Nombre: " Laura Martínez ", Telefono: "+57 310 123 4567", Direccion: "Calle 10 # 20-30", Detalle: "Apto 301", Ciudad: "yopal"}
+	if err := validarEntrega(e); err != nil {
+		t.Fatalf("datos validos rechazados: %v", err)
+	}
+	if e.Telefono != "3101234567" || e.Ciudad != "Yopal" || e.Nombre != "Laura Martínez" {
+		t.Errorf("no se normalizo: %+v", e)
+	}
+	for _, malo := range []models.DatosEntrega{
+		{Nombre: "Laura", Telefono: "123", Direccion: "Calle 10 # 20-30", Ciudad: "Yopal"},
+		{Nombre: "Laura", Telefono: "3101234567", Direccion: "mi casa", Ciudad: "Yopal"},
+		{Nombre: "Laura", Telefono: "3101234567", Direccion: "Calle 10 # 20-30", Ciudad: "Narnia"},
+		{Nombre: "123", Telefono: "3101234567", Direccion: "Calle 10 # 20-30", Ciudad: "Yopal"},
+	} {
+		m := malo
+		if validarEntrega(&m) == nil {
+			t.Errorf("deberia rechazar %+v", malo)
 		}
 	}
 }

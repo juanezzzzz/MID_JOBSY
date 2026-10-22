@@ -133,10 +133,68 @@ type filaPedido struct {
 	IdCarritos *refAnidada `json:"IdCarritos"`
 	IdEstado   int         `json:"IdEstado"`
 	Subtotal   float64     `json:"Subtotal"`
+	Descuento  float64     `json:"DescuentoTotal"`
 	Envio      float64     `json:"Envio"`
 	Total      float64     `json:"Total"`
 	Activo     bool        `json:"Activo"`
 	CreadoEn   string      `json:"CreadoEn"`
+
+	FacturaNombre    *string `json:"FacturaNombre"`
+	FacturaTelefono  *string `json:"FacturaTelefono"`
+	FacturaDireccion *string `json:"FacturaDireccion"`
+	FacturaCiudad    *string `json:"FacturaCiudad"`
+	FacturaBarrio    *string `json:"FacturaBarrio"`
+	FacturaDetalle   *string `json:"FacturaDetalle"`
+	FacturaNotas     *string `json:"FacturaNotas"`
+}
+
+// entrega arma los datos de entrega de un pedido; los pedidos anteriores a
+// que se pidieran no los tienen.
+func (p filaPedido) entrega() *models.DatosEntrega {
+	v := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	if v(p.FacturaDireccion) == "" {
+		return nil
+	}
+	return &models.DatosEntrega{
+		Nombre: v(p.FacturaNombre), Telefono: v(p.FacturaTelefono), Direccion: v(p.FacturaDireccion),
+		Detalle: v(p.FacturaDetalle), Barrio: v(p.FacturaBarrio), Ciudad: v(p.FacturaCiudad), Notas: v(p.FacturaNotas),
+	}
+}
+
+// validarEntrega revisa los datos de entrega y los deja normalizados
+// (telefono solo con digitos, ciudad con su escritura oficial).
+func validarEntrega(e *models.DatosEntrega) error {
+	if e == nil {
+		return models.Validacion("Indica a quien y a donde llevamos el pedido.").ConCampo("entrega", "Obligatorio.")
+	}
+	for _, err := range []error{
+		ValidarNombrePersona("entrega.nombre", "El nombre de quien recibe", e.Nombre),
+		ValidarDireccion("entrega.direccion", e.Direccion),
+		ValidarTexto("entrega.detalle", "El detalle de la vivienda", e.Detalle, 0, 150),
+		ValidarTexto("entrega.barrio", "El barrio", e.Barrio, 0, 100),
+		ValidarTexto("entrega.notas", "Las indicaciones", e.Notas, 0, 300),
+	} {
+		if err != nil {
+			return err
+		}
+	}
+	tel, err := ValidarTelefono("entrega.telefono", e.Telefono)
+	if err != nil {
+		return err
+	}
+	ciudad, err := CiudadServicio("entrega.ciudad", e.Ciudad)
+	if err != nil {
+		return err
+	}
+	e.Nombre, e.Telefono, e.Ciudad = strings.TrimSpace(e.Nombre), tel, ciudad
+	e.Direccion, e.Detalle = strings.TrimSpace(e.Direccion), strings.TrimSpace(e.Detalle)
+	e.Barrio, e.Notas = strings.TrimSpace(e.Barrio), strings.TrimSpace(e.Notas)
+	return nil
 }
 
 type filaPedidoItem struct {
@@ -382,6 +440,8 @@ type PeticionCheckout struct {
 	Banco      string        `json:"banco,omitempty"`
 	TipoCuenta string        `json:"tipoCuenta,omitempty"`
 	Correo     string        `json:"correo,omitempty"`
+	// Entrega es obligatoria: los productos de la tienda se envian.
+	Entrega *models.DatosEntrega `json:"entrega"`
 }
 
 const envioFijo = 8000.0
@@ -401,6 +461,9 @@ func (s *Tienda) Checkout(ctx context.Context, idUsuario string, p PeticionCheck
 	}
 	if strings.TrimSpace(p.MetodoPago) == "" {
 		return nil, models.Validacion("Falta el metodo de pago.").ConCampo("metodoPago", "Obligatorio.")
+	}
+	if err := validarEntrega(p.Entrega); err != nil {
+		return nil, err
 	}
 	// Con tarjeta el comprobante lleva titular y ultimos digitos: tienen que
 	// ser un nombre y cuatro digitos, no cualquier texto.
@@ -513,6 +576,14 @@ func (s *Tienda) Checkout(ctx context.Context, idUsuario string, p PeticionCheck
 		"Envio":          envioFijo,
 		"Total":          total,
 		"Activo":         true,
+
+		"FacturaNombre":    p.Entrega.Nombre,
+		"FacturaTelefono":  p.Entrega.Telefono,
+		"FacturaDireccion": p.Entrega.Direccion,
+		"FacturaCiudad":    p.Entrega.Ciudad,
+		"FacturaBarrio":    p.Entrega.Barrio,
+		"FacturaDetalle":   p.Entrega.Detalle,
+		"FacturaNotas":     p.Entrega.Notas,
 	}, &pedido); err != nil {
 		return nil, err
 	}
@@ -597,6 +668,7 @@ func (s *Tienda) Checkout(ctx context.Context, idUsuario string, p PeticionCheck
 		PagoID:         cobro.PagoID,
 		EstadoPago:     cobro.Estado,
 		URLRedireccion: cobro.URLRedireccion,
+		Entrega:        p.Entrega,
 	}, nil
 }
 
@@ -757,12 +829,16 @@ func (s *Tienda) PedidosADominio(ctx context.Context, pedidos []filaPedido) ([]m
 			items = append(items, item)
 		}
 		out = append(out, models.Pedido{
-			ID:     strconv.Itoa(p.Id),
-			Numero: NumeroPedido(p.Id),
-			Items:  items,
-			Total:  p.Total,
-			Estado: estado,
-			Fecha:  p.CreadoEn,
+			ID:        strconv.Itoa(p.Id),
+			Numero:    NumeroPedido(p.Id),
+			Items:     items,
+			Total:     p.Total,
+			Estado:    estado,
+			Fecha:     p.CreadoEn,
+			Subtotal:  p.Subtotal,
+			Descuento: p.Descuento,
+			Envio:     p.Envio,
+			Entrega:   p.entrega(),
 		})
 	}
 	return out, nil

@@ -46,6 +46,22 @@ type Pedido struct {
 	PagoID         string  `json:"pagoId,omitempty"`
 	EstadoPago     string  `json:"estadoPago,omitempty"`
 	URLRedireccion string  `json:"urlRedireccion,omitempty"`
+
+	// Entrega son los datos para llevar el pedido ("envio" ya es su costo).
+	Entrega *DatosEntrega `json:"entrega,omitempty"`
+}
+
+// DatosEntrega es a quien y a donde se lleva un pedido de la tienda.
+type DatosEntrega struct {
+	Nombre    string `json:"nombre"`
+	Telefono  string `json:"telefono"`
+	Direccion string `json:"direccion"`
+	// Detalle de la vivienda: apartamento, torre, casa, interior.
+	Detalle string `json:"detalle,omitempty"`
+	Barrio  string `json:"barrio,omitempty"`
+	Ciudad  string `json:"ciudad"`
+	// Notas son indicaciones para quien entrega (porteria, horario...).
+	Notas string `json:"notas,omitempty"`
 }
 
 // Cupon es el descuento resuelto para un subtotal concreto.
