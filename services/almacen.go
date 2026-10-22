@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -80,6 +81,24 @@ type AlmacenEnDisco struct {
 	urlBase string
 }
 
+// formatosAdmitidos lista las extensiones validas: "JPG, PNG o WEBP".
+func formatosAdmitidos(permitidos map[string]string) string {
+	vistos := map[string]bool{}
+	var exts []string
+	for _, e := range permitidos {
+		e = strings.ToUpper(strings.TrimPrefix(e, "."))
+		if !vistos[e] {
+			vistos[e] = true
+			exts = append(exts, e)
+		}
+	}
+	sort.Strings(exts)
+	if len(exts) <= 1 {
+		return strings.Join(exts, "")
+	}
+	return strings.Join(exts[:len(exts)-1], ", ") + " o " + exts[len(exts)-1]
+}
+
 // NuevoAlmacenEnDisco crea el almacen bajo el directorio raiz (que crea si no
 // existe) y sirve los archivos bajo urlBase. Falla si no puede crear la raiz.
 func NuevoAlmacenEnDisco(raiz, urlBase string) (*AlmacenEnDisco, error) {
@@ -99,11 +118,13 @@ func (d *AlmacenEnDisco) Guardar(ctx context.Context, carpeta string, a Archivo,
 	}
 	ext, ok := permitidos[strings.ToLower(strings.TrimSpace(a.Tipo))]
 	if !ok {
-		return "", fmt.Errorf("tipo de archivo no permitido: %q", a.Tipo)
+		// El mensaje llega tal cual al usuario: se dicen los formatos validos
+		// y no el tipo MIME, que no le dice nada.
+		return "", fmt.Errorf("Ese tipo de archivo no se admite aqui. Sube un archivo %s.", formatosAdmitidos(permitidos))
 	}
 	limite := limites[carpeta]
 	if a.Tamano > limite {
-		return "", fmt.Errorf("el archivo pesa %d bytes y el maximo es %d", a.Tamano, limite)
+		return "", fmt.Errorf("El archivo es demasiado grande: el maximo es %d MB.", limite/(1<<20))
 	}
 
 	// El nombre lo pone el servidor. Usar el del cliente permitiria
