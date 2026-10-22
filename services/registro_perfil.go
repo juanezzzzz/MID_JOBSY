@@ -76,6 +76,14 @@ func ValidarFechaNacimiento(fecha string) (string, error) {
 	if err != nil || !t.Before(time.Now()) {
 		return "", models.Validacion("La fecha de nacimiento no es valida.").ConCampo("fechaNacimiento", "Usa el formato AAAA-MM-DD.")
 	}
+	hoy := hoyColombia()
+	edad := hoy.Year() - t.Year()
+	if hoy.YearDay() < t.YearDay() {
+		edad--
+	}
+	if edad < EdadMin || edad > EdadMax {
+		return "", invalido("fechaNacimiento", fmt.Sprintf("Para registrarte debes tener entre %d y %d anos.", EdadMin, EdadMax))
+	}
 	return t.Format(time.RFC3339), nil
 }
 

@@ -94,6 +94,35 @@ func (s *Contrataciones) completar(ctx context.Context, cs []models.Contratacion
 	}
 }
 
+// validarServicio aplica las reglas comunes a toda contratacion: direccion
+// real, fecha desde hoy, hora HH:MM, entre 1 y 12 horas y una tarifa
+// razonable. La fecha vacia toma hoy, y la hora de fin es opcional.
+func validarServicio(direccion, fecha, hora, horaFin string, horas, tarifa float64, descripcion, nota string) error {
+	errs := []error{
+		ValidarDireccion("direccion", direccion),
+		ValidarHora("horaInicio", hora),
+		ValidarRango("duracionHoras", "La duracion", horas, HorasMin, HorasMax),
+		ValidarTarifa("tarifa", tarifa),
+		ValidarTexto("descripcion", "La descripcion", descripcion, 0, 500),
+		ValidarTexto("nota", "La nota", nota, 0, 500),
+	}
+	if strings.TrimSpace(fecha) != "" {
+		errs = append(errs, ValidarFechaServicio("fechaInicio", fecha))
+	}
+	if strings.TrimSpace(horaFin) != "" {
+		errs = append(errs, ValidarHora("horaFin", horaFin))
+	}
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(horaFin) != "" && minutos(horaFin) <= minutos(hora) {
+		return invalido("horaFin", "La hora de fin debe ser posterior a la de inicio.")
+	}
+	return nil
+}
+
 // cubrirOferta cierra la oferta al contratar a alguien desde ella y responde a
 // las demas postulaciones que seguian abiertas: una oferta es un puesto, y
 // dejarlas "pendientes" para siempre engana a quien se postulo. Si el
@@ -247,17 +276,8 @@ func (s *Contrataciones) Crear(ctx context.Context, idEmpleador string, p Petici
 		return nil, models.Validacion("Identificador de postulacion invalido.").
 			ConCampo("postulacionId", "Invalido.")
 	}
-	if strings.TrimSpace(p.Direccion) == "" {
-		return nil, models.Validacion("La direccion del servicio es obligatoria.").
-			ConCampo("direccion", "Obligatoria.")
-	}
-	if p.Tarifa <= 0 {
-		return nil, models.Validacion("La tarifa acordada debe ser mayor que cero.").
-			ConCampo("tarifa", "Mayor que cero.")
-	}
-	if p.DuracionHoras <= 0 {
-		return nil, models.Validacion("La duracion debe ser mayor que cero.").
-			ConCampo("duracionHoras", "Mayor que cero.")
+	if err := validarServicio(p.Direccion, p.FechaInicio, p.HoraInicio, p.HoraFin, p.DuracionHoras, p.Tarifa, p.Descripcion, p.Nota); err != nil {
+		return nil, err
 	}
 
 	var posts []filaPostulacion
@@ -629,17 +649,18 @@ func (s *Contrataciones) CrearDirecta(ctx context.Context, idEmpleador string, p
 		return nil, models.Validacion("No puedes contratarte a ti mismo.").
 			ConCampo("empleadoId", "Invalido.")
 	}
-	if strings.TrimSpace(p.Direccion) == "" {
-		return nil, models.Validacion("La direccion del servicio es obligatoria.").
-			ConCampo("direccion", "Obligatoria.")
+	if err := validarServicio(p.Direccion, p.FechaInicio, p.HoraInicio, p.HoraFin, p.DuracionHoras, p.Tarifa, p.Descripcion, p.Nota); err != nil {
+		return nil, err
 	}
-	if p.Tarifa <= 0 {
-		return nil, models.Validacion("La tarifa acordada debe ser mayor que cero.").
-			ConCampo("tarifa", "Mayor que cero.")
+	if err := ValidarTexto("titulo", "El titulo", p.Titulo, 0, 100); err != nil {
+		return nil, err
 	}
-	if p.DuracionHoras <= 0 {
-		return nil, models.Validacion("La duracion debe ser mayor que cero.").
-			ConCampo("duracionHoras", "Mayor que cero.")
+	if strings.TrimSpace(p.Ciudad) != "" {
+		ciudad, err := CiudadServicio("ciudad", p.Ciudad)
+		if err != nil {
+			return nil, err
+		}
+		p.Ciudad = ciudad
 	}
 
 	// Que exista y sea un empleado: sin esto se podria "contratar" a un

@@ -360,18 +360,19 @@ func (s *Ofertas) Crear(ctx context.Context, idEmpleador string, o models.Oferta
 	if err != nil || empleador <= 0 {
 		return nil, models.Validacion("Identificador de empleador invalido.")
 	}
-	if strings.TrimSpace(o.Titulo) == "" {
-		return nil, models.Validacion("El titulo es obligatorio.").ConCampo("titulo", "Obligatorio.")
+	for _, err := range []error{
+		ValidarTexto("titulo", "El titulo", o.Titulo, 5, 100),
+		ValidarTexto("descripcion", "La descripcion", o.Descripcion, 0, 1000),
+		ValidarDireccion("direccion", o.Direccion),
+		ValidarTarifa("precioHora", o.PrecioHora),
+		ValidarHorario("horario", o.Horario),
+	} {
+		if err != nil {
+			return nil, err
+		}
 	}
-	if strings.TrimSpace(o.Direccion) == "" {
-		return nil, models.Validacion("La direccion es obligatoria.").ConCampo("direccion", "Obligatoria.")
-	}
-	if strings.TrimSpace(o.Ciudad) == "" {
-		return nil, models.Validacion("La ciudad es obligatoria.").ConCampo("ciudad", "Obligatoria.")
-	}
-	if o.PrecioHora <= 0 {
-		return nil, models.Validacion("La tarifa por hora debe ser mayor que cero.").
-			ConCampo("precioHora", "Mayor que cero.")
+	if o.Ciudad, err = CiudadServicio("ciudad", o.Ciudad); err != nil {
+		return nil, err
 	}
 
 	idTamano, err := s.catalogo.IDTamano(ctx, o.Tamano, o.EsLujo)

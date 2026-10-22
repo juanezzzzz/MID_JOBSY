@@ -102,6 +102,9 @@ func (s *Resenas) Publicar(ctx context.Context, idAutor string, p PeticionResena
 		return nil, models.Validacion("La calificacion debe estar entre 1 y 5.").
 			ConCampo("calificacion", "Entre 1 y 5.")
 	}
+	if err := ValidarTexto("comentario", "El comentario", p.Comentario, 0, 500); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(p.Comentario) == "" {
 		return nil, models.Validacion("Escribe un comentario.").ConCampo("comentario", "Obligatorio.")
 	}

@@ -215,11 +215,8 @@ func (c *Cuentas) Registrar(ctx context.Context, p models.PeticionRegistro) (*mo
 	if err := ValidarPassword(p.Password); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(p.Nombre) == "" {
-		return nil, models.Validacion("El nombre es obligatorio.").ConCampo("nombre", "Obligatorio.")
-	}
-	if strings.TrimSpace(p.Apellido) == "" {
-		return nil, models.Validacion("El apellido es obligatorio.").ConCampo("apellido", "Obligatorio.")
+	if err := validarRegistro(p); err != nil {
+		return nil, err
 	}
 	if !p.Rol.Valido() {
 		return nil, models.Validacion("Rol invalido.").ConCampo("rol", "Debe ser empleador o empleado.")
@@ -334,6 +331,34 @@ func (c *Cuentas) Registrar(ctx context.Context, p models.PeticionRegistro) (*mo
 	}
 	u := c.aDominio(*completo)
 	return &u, nil
+}
+
+// validarRegistro aplica las reglas a los datos del asistente. Los opcionales
+// solo se validan si vienen.
+func validarRegistro(p models.PeticionRegistro) error {
+	errs := []error{
+		ValidarNombrePersona("nombre", "El nombre", p.Nombre),
+		ValidarNombrePersona("apellido", "El apellido", p.Apellido),
+		ValidarTexto("barrio", "El barrio", p.Barrio, 0, 100),
+		ValidarTexto("experiencia", "La experiencia", p.Experiencia, 0, 1000),
+		ValidarTexto("nacionalidad", "La nacionalidad", p.Nacionalidad, 0, 60),
+	}
+	if strings.TrimSpace(p.Ciudad) != "" {
+		errs = append(errs, ValidarCiudad("ciudad", p.Ciudad))
+	}
+	if strings.TrimSpace(p.Documento) != "" {
+		n := normalizar(p.Nacionalidad)
+		errs = append(errs, ValidarDocumento("documento", p.Documento, n == "" || n == "colombiana"))
+	}
+	if p.DistanciaKm != 0 {
+		errs = append(errs, ValidarRango("distanciaKm", "La distancia", p.DistanciaKm, 1, DistanciaMax))
+	}
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // idRol resuelve el id de un rol por nombre (sin distinguir mayusculas).
@@ -528,6 +553,35 @@ func (c *Cuentas) ActualizarPerfil(ctx context.Context, idUsuario string, cambio
 			}
 		}
 		return porDefecto
+	}
+	viene := func(clave string) bool { _, ok := cambios[clave]; return ok }
+
+	// Solo se valida lo que llega. Telefono y ciudad se pueden dejar vacios,
+	// pero si se escriben tienen que ser validos.
+	if viene("nombre") {
+		if err := ValidarNombrePersona("nombre", "El nombre", texto("nombre", "")); err != nil {
+			return nil, err
+		}
+	}
+	if viene("apellido") {
+		if err := ValidarNombrePersona("apellido", "El apellido", texto("apellido", "")); err != nil {
+			return nil, err
+		}
+	}
+	if tel := texto("telefono", ""); viene("telefono") && tel != "" {
+		limpio, err := ValidarTelefono("telefono", tel)
+		if err != nil {
+			return nil, err
+		}
+		cambios["telefono"] = limpio
+	}
+	if ciudad := texto("ciudad", ""); viene("ciudad") && ciudad != "" {
+		if err := ValidarCiudad("ciudad", ciudad); err != nil {
+			return nil, err
+		}
+	}
+	if err := ValidarTexto("nacionalidad", "La nacionalidad", texto("nacionalidad", ""), 0, 60); err != nil {
+		return nil, err
 	}
 
 	// El correo no se cambia desde aqui: es la identidad de acceso y

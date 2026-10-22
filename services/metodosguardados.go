@@ -98,10 +98,15 @@ func (s *MetodosGuardados) Guardar(ctx context.Context, idUsuario, idMetodoPago,
 	if err != nil {
 		return nil, models.Validacion("Metodo de pago invalido.").ConCampo("metodoId", "Invalido.")
 	}
-	numero = strings.TrimSpace(numero)
-	if len(numero) < 6 {
-		return nil, models.Validacion("El numero de cuenta no parece valido.").
-			ConCampo("numeroCuenta", "Demasiado corto.")
+	if err := ValidarTexto("alias", "El alias", alias, 2, 40); err != nil {
+		return nil, err
+	}
+	// Cuentas, tarjetas, Nequi y Daviplata son siempre numeros; los espacios
+	// y guiones con que se suelen escribir se quitan.
+	numero = strings.NewReplacer(" ", "", "-", "").Replace(strings.TrimSpace(numero))
+	if !reNumeroCuenta.MatchString(numero) {
+		return nil, models.Validacion("El numero de cuenta debe tener entre 6 y 20 digitos.").
+			ConCampo("numeroCuenta", "Solo digitos, de 6 a 20.")
 	}
 
 	idTipoCuenta, err := s.tipoCuentaPorDefecto(ctx)

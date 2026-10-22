@@ -135,6 +135,27 @@ func (s *Postulaciones) Crear(ctx context.Context, idEmpleado string, p Peticion
 	if err != nil {
 		return nil, models.Validacion("Identificador de oferta invalido.").ConCampo("jobId", "Invalido.")
 	}
+	if err := ValidarTexto("mensaje", "El mensaje", p.Mensaje, 0, 1000); err != nil {
+		return nil, err
+	}
+	if p.Tarifa != 0 {
+		if err := ValidarTarifa("tarifa", p.Tarifa); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(p.HoraInicio) != "" {
+		if err := ValidarHora("horaInicio", p.HoraInicio); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(p.HoraFin) != "" {
+		if err := ValidarHora("horaFin", p.HoraFin); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.HoraInicio) != "" && minutos(p.HoraFin) <= minutos(p.HoraInicio) {
+			return nil, invalido("horaFin", "La hora de fin debe ser posterior a la de inicio.")
+		}
+	}
 
 	// La oferta debe existir y seguir activa: el backend insertaria la fila
 	// igual contra una oferta cerrada o inexistente.

@@ -115,6 +115,15 @@ func (s *PerfilEmpleado) FijarDisponibilidad(ctx context.Context, idUsuario stri
 		if f.HoraInicio == "" || f.HoraFin == "" {
 			return nil, models.Validacion("Cada franja necesita hora de inicio y de fin.")
 		}
+		if err := ValidarHora("horaInicio", f.HoraInicio); err != nil {
+			return nil, err
+		}
+		if err := ValidarHora("horaFin", f.HoraFin); err != nil {
+			return nil, err
+		}
+		if err := ValidarTexto("nota", "La nota", f.Nota, 0, 200); err != nil {
+			return nil, err
+		}
 		if f.HoraFin <= f.HoraInicio {
 			return nil, models.Validacion("La hora de fin debe ser posterior a la de inicio.")
 		}

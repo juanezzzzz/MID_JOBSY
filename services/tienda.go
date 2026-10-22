@@ -402,6 +402,30 @@ func (s *Tienda) Checkout(ctx context.Context, idUsuario string, p PeticionCheck
 	if strings.TrimSpace(p.MetodoPago) == "" {
 		return nil, models.Validacion("Falta el metodo de pago.").ConCampo("metodoPago", "Obligatorio.")
 	}
+	// Con tarjeta el comprobante lleva titular y ultimos digitos: tienen que
+	// ser un nombre y cuatro digitos, no cualquier texto.
+	if strings.EqualFold(strings.TrimSpace(p.MetodoPago), "tarjeta") {
+		if err := ValidarNombrePersona("titular", "El titular de la tarjeta", p.Titular); err != nil {
+			return nil, err
+		}
+		if err := ValidarUltimos4("ultimos4", p.Ultimos4); err != nil {
+			return nil, err
+		}
+	}
+	// En PSE "correo" es el correo del comprobante; las billeteras mandan ahi
+	// el celular asociado, que tiene que ser un celular.
+	if c := strings.TrimSpace(p.Correo); c != "" {
+		switch strings.ToLower(strings.TrimSpace(p.MetodoPago)) {
+		case "pse":
+			if err := ValidarEmail(c); err != nil {
+				return nil, err
+			}
+		case "nequi", "daviplata":
+			if _, err := ValidarTelefono("correo", c); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	type linea struct {
 		prod     filaProducto
@@ -815,6 +839,22 @@ func validarProducto(p PeticionProducto, alta bool) error {
 	if p.Stock != nil && *p.Stock < 0 {
 		return models.Validacion("El stock no puede ser negativo.").ConCampo("stock", "Cero o mas.")
 	}
+	if p.Nombre != nil {
+		if err := ValidarTexto("nombre", "El nombre", *p.Nombre, 2, 120); err != nil {
+			return err
+		}
+	}
+	if p.Descripcion != nil {
+		if err := ValidarTexto("descripcion", "La descripcion", *p.Descripcion, 0, 1000); err != nil {
+			return err
+		}
+	}
+	if p.Precio != nil && *p.Precio > 10_000_000 {
+		return models.Validacion("El precio no puede superar 10.000.000.").ConCampo("precio", "Demasiado alto.")
+	}
+	if p.Stock != nil && *p.Stock > 100_000 {
+		return models.Validacion("El stock no puede superar 100.000 unidades.").ConCampo("stock", "Demasiado alto.")
+	}
 	return nil
 }
 
@@ -1026,6 +1066,9 @@ func (s *Tienda) AdminCrearCategoria(ctx context.Context, nombre string) (*model
 	if nombre == "" {
 		return nil, models.Validacion("Escribe un nombre.").ConCampo("nombre", "Obligatorio.")
 	}
+	if err := ValidarTexto("nombre", "El nombre de la categoria", nombre, 2, 60); err != nil {
+		return nil, err
+	}
 	if err := s.exigirNombreLibre(ctx, nombre, 0); err != nil {
 		return nil, err
 	}
@@ -1050,6 +1093,9 @@ func (s *Tienda) AdminRenombrarCategoria(ctx context.Context, idCategoria, nombr
 	nombre = strings.TrimSpace(nombre)
 	if nombre == "" {
 		return nil, models.Validacion("Escribe un nombre.").ConCampo("nombre", "Obligatorio.")
+	}
+	if err := ValidarTexto("nombre", "El nombre de la categoria", nombre, 2, 60); err != nil {
+		return nil, err
 	}
 	if _, err := s.categoriaPorID(ctx, id); err != nil {
 		return nil, err

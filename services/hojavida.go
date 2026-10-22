@@ -181,6 +181,65 @@ func (s *HojasVida) experienciasDe(ctx context.Context, idHV int) ([]models.Expe
 	return out, nil
 }
 
+// validarHojaVida revisa cada seccion: textos con longitud razonable, fechas
+// de experiencia en el pasado y en orden, y anos de estudio reales.
+func validarHojaVida(h models.HojaVida) error {
+	if err := ValidarTexto("resumenProfesional", "El resumen", h.ResumenProfesional, 0, 2000); err != nil {
+		return err
+	}
+	if len(h.Experiencias) > 20 || len(h.Educacion) > 10 || len(h.Habilidades) > 30 || len(h.Certificaciones) > 20 {
+		return models.Validacion("Demasiados elementos: hasta 20 experiencias, 10 estudios, 30 habilidades y 20 certificaciones.")
+	}
+	for i, e := range h.Experiencias {
+		c := "experiencias[" + strconv.Itoa(i) + "]"
+		for _, err := range []error{
+			ValidarTexto(c+".cargo", "El cargo", e.Cargo, 2, 100),
+			ValidarTexto(c+".empresa", "La empresa o familia", e.Empresa, 2, 150),
+			ValidarTexto(c+".descripcion", "La descripcion", e.Descripcion, 0, 500),
+		} {
+			if err != nil {
+				return err
+			}
+		}
+		desde, err := ValidarMesPasado(c+".desde", "La fecha de inicio", e.Desde)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(e.Hasta) != "" {
+			hasta, err := ValidarMesPasado(c+".hasta", "La fecha de fin", e.Hasta)
+			if err != nil {
+				return err
+			}
+			if hasta.Before(desde) {
+				return invalido(c+".hasta", "La fecha de fin no puede ser anterior a la de inicio.")
+			}
+		}
+	}
+	for i, e := range h.Educacion {
+		c := "educacion[" + strconv.Itoa(i) + "]"
+		for _, err := range []error{
+			ValidarTexto(c+".titulo", "El titulo", e.Titulo, 2, 150),
+			ValidarTexto(c+".institucion", "La institucion", e.Institucion, 2, 150),
+			ValidarAno(c+".ano", e.Ano),
+		} {
+			if err != nil {
+				return err
+			}
+		}
+	}
+	for i, x := range h.Habilidades {
+		if err := ValidarTexto("habilidades["+strconv.Itoa(i)+"]", "Cada habilidad", x, 2, 50); err != nil {
+			return err
+		}
+	}
+	for i, x := range h.Certificaciones {
+		if err := ValidarTexto("certificaciones["+strconv.Itoa(i)+"]", "Cada certificacion", x, 3, 100); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // aMes deja una fecha del backend ("2022-01-10T00:00:00Z") como la maneja el
 // <input type="month"> del front: "2022-01".
 func aMes(fecha string) string {
@@ -331,6 +390,11 @@ func (s *HojasVida) guardarCertificaciones(ctx context.Context, idUsuario int, n
 func (s *HojasVida) Actualizar(ctx context.Context, idUsuario string, cambios models.HojaVida) (*models.HojaVida, error) {
 	id, err := IDNumerico(idUsuario)
 	if err != nil {
+		return nil, err
+	}
+	// Todo se valida antes de escribir: un error a mitad dejaria la hoja de
+	// vida guardada a medias.
+	if err := validarHojaVida(cambios); err != nil {
 		return nil, err
 	}
 

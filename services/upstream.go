@@ -276,8 +276,19 @@ func (c *ClienteUpstream) desdeSobre(s sobre, statusHTTP int) error {
 		return models.NoEncontrado("el recurso").Con(causa)
 	case http.StatusBadRequest:
 		// El upstream no distingue validacion de violacion de integridad:
-		// todo cae en 400 con el mensaje de PostgreSQL. Lo reportamos como
-		// fallo de upstream para no dar por buena una validacion que no hizo.
+		// todo cae en 400 con el mensaje de PostgreSQL. Los codigos que son
+		// culpa del dato enviado se devuelven como tales (el usuario puede
+		// corregirlos); el resto se reporta como fallo de upstream.
+		switch {
+		case strings.Contains(s.Message, "(22001)"):
+			return models.Validacion("Uno de los textos es demasiado largo.").Con(causa)
+		case strings.Contains(s.Message, "(23514)"):
+			return models.Validacion("Algun dato no cumple las reglas permitidas.").Con(causa)
+		case strings.Contains(s.Message, "(23505)"):
+			return models.Conflicto("Ya existe un registro con esos datos.").Con(causa)
+		case strings.Contains(s.Message, "(23503)"):
+			return models.Validacion("Hace referencia a un dato que no existe.").Con(causa)
+		}
 		return models.Upstream(c.servicio, causa)
 	case http.StatusConflict:
 		return models.Conflicto("El recurso ya existe o esta en uso.").Con(causa)

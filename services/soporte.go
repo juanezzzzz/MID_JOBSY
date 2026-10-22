@@ -164,6 +164,12 @@ func (s *Soporte) Crear(ctx context.Context, idUsuario, tipo, asunto, descripcio
 	if descripcion == "" {
 		return nil, models.Validacion("Describe lo que ocurre.").ConCampo("descripcion", "Obligatoria.")
 	}
+	if err := ValidarTexto("asunto", "El asunto", asunto, 3, 120); err != nil {
+		return nil, err
+	}
+	if err := ValidarTexto("descripcion", "La descripcion", descripcion, 10, 2000); err != nil {
+		return nil, err
+	}
 
 	idTipo, err := s.catalogo.IDTipo(ctx, "reporte", tipoReporteABase(tipo))
 	if err != nil {
@@ -276,6 +282,9 @@ func (s *Soporte) Responder(ctx context.Context, idUsuario, idReporte, texto str
 	texto = strings.TrimSpace(texto)
 	if texto == "" {
 		return nil, models.Validacion("Escribe un mensaje.").ConCampo("texto", "Obligatorio.")
+	}
+	if err := ValidarTexto("texto", "El mensaje", texto, 1, 2000); err != nil {
+		return nil, err
 	}
 	rep, err := s.exigirPropietario(ctx, usuario, id)
 	if err != nil {
@@ -448,6 +457,9 @@ func (s *Soporte) ResponderComoSoporte(ctx context.Context, idAgente, idReporte,
 	texto = strings.TrimSpace(texto)
 	if texto == "" {
 		return nil, models.Validacion("Escribe una respuesta.").ConCampo("texto", "Obligatoria.")
+	}
+	if err := ValidarTexto("texto", "La respuesta", texto, 1, 2000); err != nil {
+		return nil, err
 	}
 	rep, err := s.reporte(ctx, id)
 	if err != nil {
