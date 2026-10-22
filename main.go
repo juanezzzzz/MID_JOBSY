@@ -123,11 +123,11 @@ func configurar() error {
 	controllers.Configurar(&controllers.Servicios{
 		Cfg:              cfg,
 		Auth:             svcAuth,
-		Cuentas:          services.NuevoCuentas(core, svcAuth),
+		Cuentas:          services.NuevoCuentas(core, svcAuth).ConPerfil(services.NuevoPerfilRegistro(core, empleo, cat, catSvc)),
 		Empleados:        services.NuevoEmpleados(core, empleo, catSvc),
 		Ofertas:          services.NuevoOfertas(empleo, catSvc),
 		Postulaciones:    services.NuevoPostulaciones(empleo, catSvc),
-		HojasVida:        services.NuevoHojasVida(empleo),
+		HojasVida:        services.NuevoHojasVida(empleo, catSvc),
 		Tienda:           svcTienda,
 		Pagos:            svcPagos,
 		Monedero:         monedero,

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -16,8 +17,16 @@ import (
 // valida tokens, no hashea contrasenas y no consulta roles. Su tabla
 // core.credenciales existe pero ningun codigo suyo la escribe.
 type Cuentas struct {
-	core *ClienteUpstream
-	auth *ServicioAuth
+	core   *ClienteUpstream
+	auth   *ServicioAuth
+	perfil *PerfilRegistro
+}
+
+// ConPerfil activa el guardado de los datos opcionales del registro
+// (documento, perfil de empleo). Sin el, el alta solo crea la cuenta.
+func (c *Cuentas) ConPerfil(p *PerfilRegistro) *Cuentas {
+	c.perfil = p
+	return c
 }
 
 // NuevoCuentas crea el servicio de cuentas sobre Core_api y el servicio de
@@ -218,6 +227,14 @@ func (c *Cuentas) Registrar(ctx context.Context, p models.PeticionRegistro) (*mo
 	if p.Rol == models.RolAdmin {
 		return nil, models.Prohibido("No puedes registrarte con ese rol.")
 	}
+	fechaNacimiento := "1990-01-01T00:00:00Z"
+	if strings.TrimSpace(p.FechaNacimiento) != "" {
+		f, err := ValidarFechaNacimiento(p.FechaNacimiento)
+		if err != nil {
+			return nil, err
+		}
+		fechaNacimiento = f
+	}
 
 	// El correo es unico en la base, pero el upstream devolveria un error
 	// generico; comprobarlo antes permite dar un mensaje util.
@@ -238,18 +255,24 @@ func (c *Cuentas) Registrar(ctx context.Context, p models.PeticionRegistro) (*mo
 		return nil, err
 	}
 
-	// core.usuarios declara NOT NULL casi todo, incluidos campos que el
-	// formulario de registro no pide. Se rellenan con valores neutros; el
-	// usuario los completa luego desde su perfil.
+	idGenero := 1
+	if c.perfil != nil {
+		if id, err := c.perfil.IDGenero(ctx, p.Genero); err == nil {
+			idGenero = id
+		}
+	}
+
+	// core.usuarios declara NOT NULL casi todo. Lo que el asistente no envio
+	// se rellena con valores neutros; el usuario lo completa desde su perfil.
 	nuevo := map[string]any{
 		"Nombre":          strings.TrimSpace(p.Nombre),
 		"Apellido":        strings.TrimSpace(p.Apellido),
 		"Correo":          strings.TrimSpace(p.Email),
 		"Telefono":        "",
-		"Ciudad":          "",
-		"FechaNacimiento": "1990-01-01T00:00:00Z",
-		"IdGenero":        1,
-		"Nacionalidad":    "",
+		"Ciudad":          strings.TrimSpace(p.Ciudad),
+		"FechaNacimiento": fechaNacimiento,
+		"IdGenero":        idGenero,
+		"Nacionalidad":    strings.TrimSpace(p.Nacionalidad),
 		"FotoUrl":         "",
 		"IdRolesUsuarios": map[string]any{"Id": idRol},
 		"Disponible":      true,
@@ -283,6 +306,14 @@ func (c *Cuentas) Registrar(ctx context.Context, p models.PeticionRegistro) (*mo
 				creado.Id, errBorrado, err))
 		}
 		return nil, err
+	}
+
+	// La cuenta ya es valida: si falla el resto (documento, perfil de empleo)
+	// no se deshace, se deja constancia y el usuario lo completa despues.
+	if c.perfil != nil {
+		if err := c.perfil.Completar(ctx, creado.Id, p); err != nil {
+			slog.Warn("registro: datos del perfil sin guardar", "usuario", creado.Id, "error", err)
+		}
 	}
 
 	// El alta devuelve el usuario tal como quedo, con su rol resuelto.

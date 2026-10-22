@@ -45,6 +45,19 @@ type PeticionRegistro struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Rol      Rol    `json:"rol"`
+
+	// Opcionales: lo que el asistente de registro del front pide en sus pasos.
+	// Antes se descartaban y el usuario tenia que volver a escribirlos.
+	Nacionalidad    string      `json:"nacionalidad,omitempty"`
+	Genero          string      `json:"genero,omitempty"`
+	FechaNacimiento string      `json:"fechaNacimiento,omitempty"` // YYYY-MM-DD
+	Documento       string      `json:"documento,omitempty"`
+	Ciudad          string      `json:"ciudad,omitempty"`
+	Barrio          string      `json:"barrio,omitempty"`
+	DistanciaKm     float64     `json:"distanciaKm,omitempty"`
+	Modalidades     []Modalidad `json:"modalidades,omitempty"`
+	Experiencia     string      `json:"experiencia,omitempty"`
+	Especialidades  []string    `json:"especialidades,omitempty"`
 }
 
 // DocumentoUsuario es un documento subido para verificar la identidad.

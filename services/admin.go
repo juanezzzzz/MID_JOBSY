@@ -75,9 +75,10 @@ func (a *Admin) Estadisticas(ctx context.Context) (*models.EstadisticasAdmin, er
 		return nil, err
 	}
 
-	// CreadoEn viene en la hora local de la base; se compara en la misma.
-	hoy := time.Now().Format("2006-01-02")
-	mes := time.Now().Format("2006-01")
+	// Jobsy_API lee y escribe las fechas en UTC, asi que CreadoEn llega en UTC
+	// y "hoy" y "este mes" se calculan en la misma zona.
+	hoy := time.Now().UTC().Format("2006-01-02")
+	mes := time.Now().UTC().Format("2006-01")
 	pedidos = a.cobrados(ctx, pedidos)
 
 	est := &models.EstadisticasAdmin{ClientesRegistrados: len(usuarios)}

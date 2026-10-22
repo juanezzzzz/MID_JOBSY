@@ -544,7 +544,7 @@ func (s *Contrataciones) CrearDirecta(ctx context.Context, idEmpleador string, p
 
 	fecha := strings.TrimSpace(p.FechaInicio)
 	if fecha == "" {
-		fecha = time.Now().Format("2006-01-02")
+		fecha = time.Now().UTC().Format("2006-01-02")
 	}
 	total := p.Tarifa * p.DuracionHoras
 
