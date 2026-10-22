@@ -1,30 +1,5 @@
-# Binarios
+﻿/bin/
 *.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-MID_JOBSY
-api_MID
-
-# Beego / bee
-lastupdate.tmp
 *.log
-
-# Tests y cobertura
-*.test
-*.out
-coverage.*
-
-# Entorno
 .env
-.env.*
-
-# IDE / SO
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-
-# Claude Code (config local)
-.claude/
+/archivos/

@@ -1,20 +1,18 @@
-
 package controllers
 
 import (
-	"api_MID/services"
 	"net/http"
+
+	"api_MID/services"
 )
 
 // AdminTiendaController es el panel de la tienda.
-
 type AdminTiendaController struct {
 	AdminController
 }
 
 // Estadisticas devuelve las metricas del panel (ventas, ingresos, etc.).
-// GET /api/admin/estadisticas.
-
+// GET /api/tienda/admin/estadisticas.
 func (c *AdminTiendaController) Estadisticas() {
 	est, err := svc.Admin.Estadisticas(c.Contexto())
 	if err != nil {
@@ -26,7 +24,6 @@ func (c *AdminTiendaController) Estadisticas() {
 
 // Ventas devuelve la serie de ventas del ano indicado en ?ano.
 // GET /api/tienda/admin/ventas.
-
 func (c *AdminTiendaController) Ventas() {
 	items, err := svc.Admin.Ventas(c.Contexto(), c.Entero("ano"))
 	if err != nil {
@@ -38,7 +35,6 @@ func (c *AdminTiendaController) Ventas() {
 
 // ProductosTop devuelve los productos mas vendidos (acotado por ?limit).
 // GET /api/tienda/admin/productos-top.
-
 func (c *AdminTiendaController) ProductosTop() {
 	items, err := svc.Admin.ProductosTop(c.Contexto(), c.Entero("limit"))
 	if err != nil {
@@ -50,7 +46,6 @@ func (c *AdminTiendaController) ProductosTop() {
 
 // PedidosRecientes devuelve los ultimos pedidos (acotado por ?limit).
 // GET /api/tienda/admin/pedidos-recientes.
-
 func (c *AdminTiendaController) PedidosRecientes() {
 	items, err := svc.Admin.PedidosRecientes(c.Contexto(), c.Entero("limit"))
 	if err != nil {
@@ -60,16 +55,26 @@ func (c *AdminTiendaController) PedidosRecientes() {
 	c.Responder(http.StatusOK, items)
 }
 
-// CrearProducto da de alta u producto. Responde 201.
-// POST /api/tienda/admin/productos.
+// Productos lista todos los productos para administrarlos (incluye inactivos).
+// GET /api/tienda/admin/productos.
+func (c *AdminTiendaController) Productos() {
+	items, err := svc.Tienda.AdminProductos(c.Contexto())
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusOK, items)
+}
 
+// CrearProducto da de alta un producto. Responde 201.
+// POST /api/tienda/admin/productos.
 func (c *AdminTiendaController) CrearProducto() {
 	var p services.PeticionProducto
 	if err := c.LeerJSON(&p); err != nil {
 		c.Fallo(err)
 		return
 	}
-	prod, err := svc.Tienda.AdminCrearProductos(c.Contexto(), p)
+	prod, err := svc.Tienda.AdminCrearProducto(c.Contexto(), p)
 	if err != nil {
 		c.Fallo(err)
 		return
@@ -77,8 +82,7 @@ func (c *AdminTiendaController) CrearProducto() {
 	c.Responder(http.StatusCreated, prod)
 }
 
-// ActualizarProductos modifica el producto :id. PUT /api/tienda/admin/productos/:id.
-
+// ActualizarProducto modifica el producto :id. PUT /api/tienda/admin/productos/:id.
 func (c *AdminTiendaController) ActualizarProducto() {
 	var p services.PeticionProducto
 	if err := c.LeerJSON(&p); err != nil {
@@ -123,7 +127,6 @@ func (c *AdminTiendaController) AjustarStock() {
 
 // Reembolsar deshace un pedido ya cobrado: devuelve el dinero y repone stock.
 // POST /api/tienda/admin/pedidos/:id/reembolsar.
-
 func (c *AdminTiendaController) Reembolsar() {
 	var p struct {
 		Motivo string `json:"motivo"`
@@ -264,4 +267,3 @@ func (c *AdminSoporteController) Retirar() {
 	}
 	c.SinContenido()
 }
-

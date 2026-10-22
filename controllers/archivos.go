@@ -10,7 +10,6 @@ import (
 
 // ArchivosController sirve los archivos guardados. Es publico: los nombres
 // son aleatorios y no se pueden adivinar.
-
 type ArchivosController struct {
 	BaseController
 }
@@ -21,16 +20,16 @@ func (c *ArchivosController) Servir() {
 		c.Fallo(models.NoEncontrado("ese archivo"))
 		return
 	}
-	f, tipo, err := svc.Almacen.Abrir(c.contexto(), c.Ctx.Input.Param(":splat"))
+	f, tipo, err := svc.Almacen.Abrir(c.Contexto(), c.Ctx.Input.Param(":splat"))
 	if err != nil {
 		c.Fallo(models.NoEncontrado("ese archivo"))
 		return
 	}
 	defer f.Close()
 
-	c.Ctx.Output.Header("Content-type", tipo)
+	c.Ctx.Output.Header("Content-Type", tipo)
 	c.Ctx.Output.Header("X-Content-Type-Options", "nosniff")
-	// Los archivos llevan nombre aleatorio y no cambian, asi que pueden
+	// Los archivos llevan nombre aleatorio y no cambian, asi que se pueden
 	// cachear largo.
 	c.Ctx.Output.Header("Cache-Control", "public, max-age=31536000, immutable")
 	_, _ = io.Copy(c.Ctx.ResponseWriter, f)
@@ -44,17 +43,15 @@ func (c *ArchivosController) Servir() {
 // El tamano maximo de la peticion entera lo corta Beego antes de leer nada
 // (maxuploadsize en app.conf): sin eso un cliente puede agotar la memoria del
 // proceso mandando un multipart enorme.
-
-func (c *BaseController) recibirArchivo(campo, carpeta string) (string, error) {
+func (c *SesionController) recibirArchivo(campo, carpeta string) (string, error) {
 	if svc.Almacen == nil {
 		return "", models.NoImplementado("El almacenamiento de archivos no esta configurado.")
-
 	}
 
 	const maxPeticion = 12 << 20
 	r := c.Ctx.Request
-	if err := r.ParseMultipartForm(maxPeticion); err !=nil {
-		return "", models.Validacion("el archivo es demasiado grande o el formulario no es valido.")
+	if err := r.ParseMultipartForm(maxPeticion); err != nil {
+		return "", models.Validacion("El archivo es demasiado grande o el formulario no es valido.")
 	}
 
 	archivo, cabecera, err := r.FormFile(campo)
@@ -72,7 +69,7 @@ func (c *BaseController) recibirArchivo(campo, carpeta string) (string, error) {
 		return "", models.Interno(err)
 	}
 
-	url, err := svc.Almacen.Guardar(c.contexto(), carpeta, services.Archivo{
+	url, err := svc.Almacen.Guardar(c.Contexto(), carpeta, services.Archivo{
 		Nombre: cabecera.Filename,
 		Tipo:   tipo,
 		Tamano: cabecera.Size,
@@ -81,5 +78,4 @@ func (c *BaseController) recibirArchivo(campo, carpeta string) (string, error) {
 		return "", models.Validacion(err.Error())
 	}
 	return url, nil
-
 }

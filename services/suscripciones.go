@@ -6,9 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"MID_JOBSY/models"
-
-	"golang.org/x/text/cases"
+	"api_MID/models"
 )
 
 // Suscripciones implementa los planes y el alta de suscripcion.
@@ -46,12 +44,11 @@ type filaSuscripcion struct {
 	Activo     bool        `json:"Activo"`
 }
 
-//tier desde el nombre deduce el nivel del plan, que la base no guarda como tal
-// pero el frontent tipa como 'Gratis' | 'basico' | 'premium'
-
+// tierDesdeNombre deduce el nivel del plan, que la base no guarda como tal
+// pero el frontend tipa como 'gratis' | 'basico' | 'premium'.
 func tierDesdeNombre(nombre string) string {
 	n := strings.ToLower(nombre)
-	switch {  
+	switch {
 	case strings.Contains(n, "premium"), strings.Contains(n, "pro"):
 		return "premium"
 	case strings.Contains(n, "basic"), strings.Contains(n, "basico"):

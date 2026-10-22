@@ -1,54 +1,51 @@
-
 package models
 
 type Tamano string
 
 const (
-	TamanoPequeno  Tamano = "pequeno"
-	TamanoMediano  Tamano = "mediano"
-	TamanoGrande   Tamano = "grande"
+	TamanoPequeno Tamano = "pequeno"
+	TamanoMediano Tamano = "mediano"
+	TamanoGrande  Tamano = "grande"
 )
 
 type Modalidad string
 
 const (
-	ModalidadPresencial        Modalidad = "presencial"
-	ModalidadPorHoras          Modalidad = "por_horas"
-	ModalidadJornadaCompleta   Modalidad = "jornada_completa"
-	ModalidadFinDeSemana       Modalidad = "fin_de_semana"
+	ModalidadPresencial   Modalidad = "presencial"
+	ModalidadPorHoras     Modalidad = "por_horas"
+	ModalidadJornadaCompl Modalidad = "jornada_completa"
+	ModalidadFinDeSemana  Modalidad = "fin_de_semana"
 )
 
 type Oferta struct {
-	ID				      string `json:"id"`
-	Titulo			      string `json:"titulo"`
-	Descripcion		      string `json:"descripcion,omitempty"`
-	Tamano			      Tamano `json:"tamano"`
-	EsLujo			      bool   `json:"es_lujo"`
-	PrecioHora		      float64 `json:"precio_hora"`
-	Moneda			      string `json:"moneda"`
-	Horario			      string `json:"horario"`
-	Direccion		      string `json:"direccion"`
-	Ciudad			      string `json:"ciudad"`
-	Modalidad		      Modalidad `json:"modalidad"`
-	Etiquetas		      []string `json:"etiquetas,omitempty"`
-	ImagenURL		      string `json:"imagen_url,omitempty"`
-	EsNuevo		          bool   `json:"es_nuevo"`
-	EmpleadorID		      string `json:"empleador_id"`
-	FechaPublicacion      string `json:"fecha_publicacion"`
-
+	ID               string    `json:"id"`
+	Titulo           string    `json:"titulo"`
+	Descripcion      string    `json:"descripcion,omitempty"`
+	Tamano           Tamano    `json:"tamano"`
+	EsLujo           bool      `json:"esLujo,omitempty"`
+	PrecioHora       float64   `json:"precioHora"`
+	Moneda           string    `json:"moneda"`
+	Horario          string    `json:"horario"`
+	Direccion        string    `json:"direccion"`
+	Ciudad           string    `json:"ciudad"`
+	Modalidad        Modalidad `json:"modalidad"`
+	Etiquetas        []string  `json:"etiquetas"`
+	ImagenURL        string    `json:"imagenUrl,omitempty"`
+	EsNuevo          bool      `json:"esNuevo"`
+	EmpleadorID      string    `json:"empleadorId"`
+	FechaPublicacion string    `json:"fechaPublicacion"`
 }
 
 type FiltrosOferta struct {
-	Tamano            []Tamano
-	Modalidad         []Modalidad
-	PrecioMinimo      float64
-	PrecioMaximo      float64
-	Ciudad            string
-	Busqueda          string
-	Pagina            int
-	TamanoPag         int
+	Tamano    []Tamano
+	Modalidad []Modalidad
+	PrecioMin float64
+	PrecioMax float64
+	Ciudad    string
+	Busqueda  string
+	Pagina    int
+	TamanoPag int
 }
-
 
 type EstadoPostulacion string
 
@@ -59,13 +56,10 @@ const (
 	PostRechazada  EstadoPostulacion = "rechazada"
 )
 
-
 // Postulacion incluye los campos de disponibilidad que el asistente del front
 // ya captura pero hoy descarta (asistente-postulacion.ts los pide y
 // application.service.ts solo manda el mensaje). La tabla empleo.postulaciones
 // tiene columnas para todos ellos.
-
-
 type Postulacion struct {
 	ID               string            `json:"id"`
 	OfertaID         string            `json:"jobId"`
@@ -112,4 +106,3 @@ type Resena struct {
 	Texto     string  `json:"texto"`
 	Fecha     string  `json:"fecha"`
 }
-
