@@ -37,6 +37,7 @@ type Servicios struct {
 	Cuentas          *services.Cuentas
 	Empleados        *services.Empleados
 	Ofertas          *services.Ofertas
+	Empleador        *services.Empleador
 	Postulaciones    *services.Postulaciones
 	HojasVida        *services.HojasVida
 	Tienda           *services.Tienda

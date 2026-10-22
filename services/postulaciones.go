@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,13 @@ import (
 type Postulaciones struct {
 	empleo   *ClienteUpstream
 	catalogo *Catalogo
+	avisos   *Notificaciones
+}
+
+// ConAvisos activa la notificacion al empleador cuando alguien se postula.
+func (s *Postulaciones) ConAvisos(n *Notificaciones) *Postulaciones {
+	s.avisos = n
+	return s
 }
 
 // NuevoPostulaciones crea el servicio de postulaciones sobre Empleo_API y el
@@ -143,6 +151,11 @@ func (s *Postulaciones) Crear(ctx context.Context, idEmpleado string, p Peticion
 	if ofertas[0].IdEmpleador == empleado {
 		return nil, models.Validacion("No puedes postularte a tu propia oferta.")
 	}
+	// Activo solo dice que no esta borrada: una oferta pausada o cerrada por
+	// su empleador tampoco admite postulaciones.
+	if idActiva, err := s.catalogo.IDEstado(ctx, "oferta", "activa"); err == nil && ofertas[0].IdEstado != idActiva {
+		return nil, models.Conflicto("Esa oferta ya no recibe postulaciones.")
+	}
 
 	// Una sola postulacion por persona y oferta.
 	var previas []filaPostulacion
@@ -199,6 +212,15 @@ func (s *Postulaciones) Crear(ctx context.Context, idEmpleado string, p Peticion
 		res.EmpleadoID = strconv.Itoa(empleado)
 	}
 	res.Mensaje = strings.TrimSpace(p.Mensaje)
+
+	// El empleador se entera por su bandeja de avisos. Si el aviso falla la
+	// postulacion ya quedo hecha: solo se registra.
+	if s.avisos != nil {
+		if err := s.avisos.Crear(ctx, ofertas[0].IdEmpleador, "postulacion", "Nueva postulacion",
+			"Alguien se postulo a tu oferta «"+ofertas[0].Titulo+"».", "/app/mis-ofertas"); err != nil {
+			slog.Warn("no se pudo avisar al empleador", "oferta", oferta, "error", err)
+		}
+	}
 	return &res, nil
 }
 

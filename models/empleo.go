@@ -75,6 +75,24 @@ type Postulacion struct {
 	TarifaMax        float64           `json:"tarifaMax,omitempty"`
 }
 
+// OfertaPropia es una oferta vista por su empleador: ademas de lo publico,
+// su estado, cuantas postulaciones tiene y todas sus fotos.
+type OfertaPropia struct {
+	Oferta
+	Estado        string   `json:"estado"` // activa | pausada | cerrada
+	Postulaciones int      `json:"postulaciones"`
+	Pendientes    int      `json:"pendientes"`
+	Fotos         []string `json:"fotos"`
+}
+
+// PostulacionRecibida es una postulacion a una oferta propia, con la ficha de
+// quien se postula y, si ya se contrato, el id de la contratacion.
+type PostulacionRecibida struct {
+	Postulacion
+	Empleado       *Empleado `json:"empleado,omitempty"`
+	ContratacionID string    `json:"contratacionId,omitempty"`
+}
+
 // Empleado es la vista plana que pinta el front. En la base son tres tablas:
 // core.usuarios + empleo.perfiles_empleado + el agregado de empleo.resenas.
 // Este tipo es el ejemplo canonico de lo que pediste: el front pide una cosa,

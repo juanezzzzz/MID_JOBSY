@@ -204,6 +204,22 @@ func (s *PerfilRegistro) perfilEmpleo(ctx context.Context, idUsuario int, p mode
 	return s.especialidades(ctx, perfil.Id, p.Especialidades)
 }
 
+// idEspecialidad busca una especialidad del catalogo por el nombre que usa el
+// front: igual sin tildes ni mayusculas, o como comienzo del nombre de la base
+// ("Cocina" -> "Cocina y alimentacion"). Devuelve 0 si no existe.
+func idEspecialidad(catalogo []filaNombre, nombre string) int {
+	id := 0
+	for _, c := range catalogo {
+		if normalizar(c.Nombre) == normalizar(nombre) {
+			return c.Id
+		}
+		if id == 0 && strings.HasPrefix(normalizar(c.Nombre), normalizar(nombre)+" ") {
+			id = c.Id
+		}
+	}
+	return id
+}
+
 // especialidades enlaza las elegidas con el catalogo de empleo. Se acepta que
 // el nombre del front sea el comienzo del de la base ("Cocina" -> "Cocina y
 // alimentacion"); las que no existen se informan.
@@ -217,16 +233,7 @@ func (s *PerfilRegistro) especialidades(ctx context.Context, idPerfil int, elegi
 	}
 	var errs []error
 	for _, e := range elegidas {
-		id := 0
-		for _, c := range catalogo {
-			if normalizar(c.Nombre) == normalizar(e) {
-				id = c.Id
-				break
-			}
-			if id == 0 && strings.HasPrefix(normalizar(c.Nombre), normalizar(e)+" ") {
-				id = c.Id
-			}
-		}
+		id := idEspecialidad(catalogo, e)
 		if id == 0 {
 			errs = append(errs, fmt.Errorf("especialidad %q no existe en empleo.especialidades", e))
 			continue

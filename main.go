@@ -118,15 +118,20 @@ func configurar() error {
 	}
 
 	svcAuth := services.NuevoServicioAuth(cfg.JWTSecreto, cfg.JWTDuracion)
+	avisos := services.NuevoNotificaciones(usuarios, catSvc)
+	svcOfertas := services.NuevoOfertas(empleo, catSvc)
+	svcEmpleados := services.NuevoEmpleados(core, empleo, catSvc)
+	svcPostulaciones := services.NuevoPostulaciones(empleo, catSvc).ConAvisos(avisos)
 	svcPagos := services.NuevoPagos(tienda, catSvc, registroPago, monedero)
 	svcTienda := services.NuevoTienda(tienda, catSvc, svcPagos)
 	controllers.Configurar(&controllers.Servicios{
 		Cfg:              cfg,
 		Auth:             svcAuth,
 		Cuentas:          services.NuevoCuentas(core, svcAuth).ConPerfil(services.NuevoPerfilRegistro(core, empleo, cat, catSvc)),
-		Empleados:        services.NuevoEmpleados(core, empleo, catSvc),
-		Ofertas:          services.NuevoOfertas(empleo, catSvc),
-		Postulaciones:    services.NuevoPostulaciones(empleo, catSvc),
+		Empleados:        svcEmpleados,
+		Ofertas:          svcOfertas,
+		Empleador:        services.NuevoEmpleador(empleo, catSvc, svcOfertas, svcPostulaciones, svcEmpleados, avisos),
+		Postulaciones:    svcPostulaciones,
 		HojasVida:        services.NuevoHojasVida(empleo, catSvc),
 		Tienda:           svcTienda,
 		Pagos:            svcPagos,
@@ -134,9 +139,9 @@ func configurar() error {
 		Suscripciones:    services.NuevoSuscripciones(susc, catSvc),
 		Soporte:          services.NuevoSoporte(soporte, catSvc),
 		Admin:            services.NuevoAdmin(tienda, core, catSvc, svcTienda),
-		Contrataciones:   services.NuevoContrataciones(empleo, catSvc, svcPagos),
+		Contrataciones:   services.NuevoContrataciones(empleo, catSvc, svcPagos).ConAvisos(avisos),
 		Resenas:          services.NuevoResenas(empleo, catSvc),
-		Notificaciones:   services.NuevoNotificaciones(usuarios, catSvc),
+		Notificaciones:   avisos,
 		Configuraciones:  services.NuevoConfiguraciones(usuarios),
 		Almacen:          almacenArchivos,
 		Carrito:          services.NuevoCarrito(tienda, catSvc),

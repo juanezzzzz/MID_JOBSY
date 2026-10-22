@@ -75,6 +75,12 @@ func init() {
 	beego.Router("/api/empleo/postulaciones", &controllers.EmpleoController{}, "post:Postular")
 	beego.Router("/api/empleo/postulaciones/mias", &controllers.EmpleoController{}, "get:MisPostulaciones")
 	beego.Router("/api/empleo/postulaciones/:id", &controllers.EmpleoController{}, "delete:RetirarPostulacion")
+	beego.Router("/api/empleo/postulaciones/:id/estado", &controllers.EmpleoController{}, "put:EstadoPostulacion")
+	// Lado del empleador: sus ofertas, sus fotos y quienes se postulan.
+	beego.Router("/api/empleo/ofertas/mias", &controllers.EmpleoController{}, "get:MisOfertas")
+	beego.Router("/api/empleo/ofertas/:id/postulaciones", &controllers.EmpleoController{}, "get:PostulacionesRecibidas")
+	beego.Router("/api/empleo/ofertas/:id/estado", &controllers.EmpleoController{}, "put:EstadoOferta")
+	beego.Router("/api/empleo/ofertas/:id/fotos", &controllers.EmpleoController{}, "post:SubirFotoOferta")
 	beego.Router("/api/empleo/contrataciones", &controllers.EmpleoController{}, "post:Contratar")
 	beego.Router("/api/empleo/contrataciones/mias", &controllers.EmpleoController{}, "get:MisContrataciones")
 	beego.Router("/api/empleo/contrataciones/directa", &controllers.EmpleoController{}, "post:ContratarDirecto")

@@ -21,6 +21,25 @@ type Contrataciones struct {
 	empleo   *ClienteUpstream
 	catalogo *Catalogo
 	pagos    *Pagos
+	avisos   *Notificaciones
+}
+
+// ConAvisos activa la notificacion al empleado cuando lo contratan.
+func (s *Contrataciones) ConAvisos(n *Notificaciones) *Contrataciones {
+	s.avisos = n
+	return s
+}
+
+// avisarContratado deja el aviso al empleado; si falla solo se registra,
+// porque la contratacion ya quedo hecha.
+func (s *Contrataciones) avisarContratado(ctx context.Context, idEmpleado int, titulo string) {
+	if s.avisos == nil {
+		return
+	}
+	if err := s.avisos.Crear(ctx, idEmpleado, "postulacion", "Te contrataron",
+		"Te contrataron para «"+titulo+"». Revisa los detalles en tus contrataciones.", "/app/mis-postulaciones"); err != nil {
+		slog.Warn("no se pudo avisar al empleado", "empleado", idEmpleado, "error", err)
+	}
 }
 
 // NuevoContrataciones crea el servicio de contrataciones sobre Empleo_API, el
@@ -222,6 +241,7 @@ func (s *Contrataciones) Crear(ctx context.Context, idEmpleador string, p Petici
 	// La postulacion pasa a aceptada: dejarla pendiente despues de contratar
 	// seria mentir en la pantalla del candidato.
 	_ = s.marcarPostulacionAceptada(ctx, post)
+	s.avisarContratado(ctx, post.IdEmpleado, ofertas[0].Titulo)
 
 	res := s.aDominio(ctx, creada)
 	if res.EmpleadoID == "0" {
@@ -584,6 +604,12 @@ func (s *Contrataciones) CrearDirecta(ctx context.Context, idEmpleador string, p
 			HoraFin:    p.HoraFin,
 		})
 	}
+
+	titulo := strings.TrimSpace(p.Titulo)
+	if titulo == "" {
+		titulo = "un trabajo"
+	}
+	s.avisarContratado(ctx, empleado, titulo)
 
 	res := s.aDominio(ctx, creada)
 	if res.EmpleadoID == "0" {

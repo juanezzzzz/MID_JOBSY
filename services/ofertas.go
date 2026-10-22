@@ -62,9 +62,12 @@ type filaOfertaServicio struct {
 }
 
 type filaOfertaFoto struct {
+	Id          int        `json:"Id"`
 	IdOfertas   refAnidada `json:"IdOfertas"`
 	UrlFoto     string     `json:"UrlFoto"`
+	Orden       int        `json:"Orden"`
 	EsPrincipal bool       `json:"EsPrincipal"`
+	Activo      bool       `json:"Activo"`
 }
 
 // aDominio traduce una fila cruda al tipo que espera el frontend.
@@ -427,6 +430,11 @@ func (s *Ofertas) Crear(ctx context.Context, idEmpleador string, o models.Oferta
 		return nil, models.Upstream("empleo", errAltaSinID)
 	}
 
+	// Las tareas que marca el empleador ("Limpieza", "Cocina"...) se enlazan
+	// con el catalogo de especialidades. Antes llegaban y se descartaban, y la
+	// ficha de la oferta salia sin tareas.
+	etiquetas := s.enlazarEtiquetas(ctx, creada.Id, o.Etiquetas)
+
 	res, err := s.aDominio(ctx, creada)
 	if err != nil {
 		// El alta funciono; si la traduccion falla se devuelve lo enviado.
@@ -434,7 +442,49 @@ func (s *Ofertas) Crear(ctx context.Context, idEmpleador string, o models.Oferta
 		o.EmpleadorID = idEmpleador
 		return &o, nil
 	}
+	res.Etiquetas = etiquetas
 	return &res, nil
+}
+
+// enlazarEtiquetas crea los enlaces oferta-especialidad y devuelve las que
+// quedaron. Las que no estan en el catalogo se registran y se omiten: la
+// oferta ya esta publicada y no debe fallar por una etiqueta.
+func (s *Ofertas) enlazarEtiquetas(ctx context.Context, idOferta int, nombres []string) []string {
+	enlazadas := []string{}
+	if len(nombres) == 0 {
+		return enlazadas
+	}
+	var catalogo []filaNombre
+	if err := s.empleo.Get(ctx, "especialidades", sinLimite(), &catalogo); err != nil {
+		slog.Warn("no se pudieron leer las especialidades", "oferta", idOferta, "error", err)
+		return enlazadas
+	}
+	nombrePorID := make(map[int]string, len(catalogo))
+	for _, c := range catalogo {
+		nombrePorID[c.Id] = c.Nombre
+	}
+	vistas := map[int]bool{}
+	for _, n := range nombres {
+		id := idEspecialidad(catalogo, n)
+		if id == 0 || vistas[id] {
+			if id == 0 {
+				slog.Warn("etiqueta de oferta sin especialidad", "oferta", idOferta, "etiqueta", n)
+			}
+			continue
+		}
+		vistas[id] = true
+		var creado map[string]any
+		if err := s.empleo.Post(ctx, "tr_oferta_servicios", map[string]any{
+			"IdOfertas":        map[string]any{"Id": idOferta},
+			"IdEspecialidades": map[string]any{"Id": id},
+			"Activo":           true,
+		}, &creado); err != nil {
+			slog.Warn("no se pudo enlazar la etiqueta", "oferta", idOferta, "etiqueta", n, "error", err)
+			continue
+		}
+		enlazadas = append(enlazadas, nombrePorID[id])
+	}
+	return enlazadas
 }
 
 // primerTipoInmueble devuelve el id del primer tipo de inmueble activo, que se
