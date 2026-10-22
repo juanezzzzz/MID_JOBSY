@@ -140,7 +140,7 @@ type EmpleoController struct {
 // CrearOferta publica una oferta a nombre del empleador del token. Responde
 // 201. POST /api/empleo/ofertas.
 func (c *EmpleoController) CrearOferta() {
-	id, err := c.UsuarioActual()
+	id, err := c.UsuarioConRol(models.RolEmpleador)
 	if err != nil {
 		c.Fallo(err)
 		return
@@ -177,7 +177,7 @@ func (c *EmpleoController) MisPostulaciones() {
 // Postular crea una postulacion del empleado a una oferta. Responde 201.
 // POST /api/empleo/postulaciones.
 func (c *EmpleoController) Postular() {
-	id, err := c.UsuarioActual()
+	id, err := c.UsuarioConRol(models.RolEmpleado)
 	if err != nil {
 		c.Fallo(err)
 		return
@@ -229,7 +229,7 @@ func (c *EmpleoController) MisContrataciones() {
 // Contratar formaliza una contratacion a partir de una postulacion aceptada.
 // Responde 201. POST /api/empleo/contrataciones.
 func (c *EmpleoController) Contratar() {
-	id, err := c.UsuarioActual()
+	id, err := c.UsuarioConRol(models.RolEmpleador)
 	if err != nil {
 		c.Fallo(err)
 		return
@@ -251,7 +251,7 @@ func (c *EmpleoController) Contratar() {
 // servicio crea por dentro la oferta y la postulacion necesarias. Responde
 // 201. POST /api/empleo/contrataciones/directa.
 func (c *EmpleoController) ContratarDirecto() {
-	id, err := c.UsuarioActual()
+	id, err := c.UsuarioConRol(models.RolEmpleador)
 	if err != nil {
 		c.Fallo(err)
 		return

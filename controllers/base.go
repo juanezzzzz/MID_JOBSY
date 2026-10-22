@@ -171,6 +171,19 @@ func (c *SesionController) UsuarioActual() (string, error) {
 	return cl.UsuarioID, nil
 }
 
+// UsuarioConRol es UsuarioActual exigiendo ademas uno de los roles dados.
+// Responde 403 si el token es valido pero el rol no corresponde.
+func (c *SesionController) UsuarioConRol(roles ...models.Rol) (string, error) {
+	id, err := c.UsuarioActual()
+	if err != nil {
+		return "", err
+	}
+	if err := services.ExigirRol(c.Contexto(), roles...); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // AdminController exige ademas el rol de administrador.
 //
 // El guard del frontend lee el rol de localStorage y es manipulable; la
