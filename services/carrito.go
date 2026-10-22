@@ -146,12 +146,19 @@ func (s *Carrito) Mio(ctx context.Context, idUsuario string) (*models.Carrito, e
 // Un fallo aqui tiene que subir: si se tomara por "sin lineas", Agregar
 // crearia una linea duplicada en vez de acumular sobre la existente.
 func (s *Carrito) lineasActivas(ctx context.Context, idCarrito int) ([]filaCarritoItem, error) {
+	return s.lineas(ctx, idCarrito, true)
+}
+
+// lineas lee las lineas del carrito; con soloActivas en false incluye las
+// desactivadas al quitar o vaciar.
+func (s *Carrito) lineas(ctx context.Context, idCarrito int, soloActivas bool) ([]filaCarritoItem, error) {
 	var items []filaCarritoItem
+	filtro := map[string]string{"IdCarritos": strconv.Itoa(idCarrito)}
+	if soloActivas {
+		filtro["Activo"] = "true"
+	}
 	o := &OpcionesUpstream{Query: map[string][]string{}}
-	o.Query.Set("query", QueryBeego(map[string]string{
-		"IdCarritos": strconv.Itoa(idCarrito),
-		"Activo":     "true",
-	}))
+	o.Query.Set("query", QueryBeego(filtro))
 	o.Query.Set("limit", "100")
 	if err := s.tienda.Get(ctx, "tr_carrito_items", o, &items); err != nil {
 		return nil, err
@@ -243,7 +250,10 @@ func (s *Carrito) cambiar(ctx context.Context, idUsuario, idProducto string, nue
 	if err != nil {
 		return nil, err
 	}
-	lineas, err := s.lineasActivas(ctx, c.Id)
+	// Se buscan tambien las lineas desactivadas: quitar o vaciar no borra la
+	// fila y la tabla admite una sola por (carrito, producto). Volver a
+	// agregar un producto quitado debe reactivar esa fila, no crear otra.
+	lineas, err := s.lineas(ctx, c.Id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +266,7 @@ func (s *Carrito) cambiar(ctx context.Context, idUsuario, idProducto string, nue
 		}
 	}
 	actual := 0
-	if existente != nil {
+	if existente != nil && existente.Activo {
 		actual = existente.Cantidad
 	}
 	cantidad := nueva(actual)
