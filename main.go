@@ -137,7 +137,7 @@ func configurar() error {
 		Pagos:            svcPagos,
 		Monedero:         monedero,
 		Suscripciones:    services.NuevoSuscripciones(susc, catSvc),
-		Soporte:          services.NuevoSoporte(soporte, catSvc),
+		Soporte:          services.NuevoSoporte(soporte, catSvc).ConUsuarios(core),
 		Admin:            services.NuevoAdmin(tienda, core, catSvc, svcTienda),
 		Contrataciones:   services.NuevoContrataciones(empleo, catSvc, svcPagos).ConAvisos(avisos).ConUsuarios(core),
 		Resenas:          services.NuevoResenas(empleo, catSvc),

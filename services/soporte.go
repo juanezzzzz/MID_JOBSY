@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"api_MID/models"
@@ -14,6 +15,14 @@ import (
 type Soporte struct {
 	soporte  *ClienteUpstream
 	catalogo *Catalogo
+	core     *ClienteUpstream
+}
+
+// ConUsuarios permite poner en el panel admin el nombre de quien reporta en
+// lugar de su id.
+func (s *Soporte) ConUsuarios(core *ClienteUpstream) *Soporte {
+	s.core = core
+	return s
 }
 
 // NuevoSoporte crea el servicio de soporte sobre su upstream y el catalogo
@@ -60,7 +69,57 @@ func (s *Soporte) Mios(ctx context.Context, idUsuario string) ([]models.Reporte,
 	for _, f := range filas {
 		out = append(out, s.aDominio(ctx, f))
 	}
+	// Un usuario tiene pocos reportes: se lee el hilo de cada uno a la vez.
+	hilos := make([][]filaMensajeReporte, len(filas))
+	fns := make([]func() error, len(filas))
+	for i, f := range filas {
+		fns[i] = func() error {
+			m, err := s.filasMensajes(ctx, f.Id, 200)
+			hilos[i] = m
+			return err
+		}
+	}
+	if err := EnParalelo(fns...); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		resumir(&out[i], hilos[i], filas[i].IdUsuarios)
+	}
 	return out, nil
+}
+
+// filasMensajes lee el hilo de un reporte (id > 0) o, con id 0, los mensajes
+// de todos los reportes en una sola peticion.
+func (s *Soporte) filasMensajes(ctx context.Context, idReporte, limite int) ([]filaMensajeReporte, error) {
+	filtro := map[string]string{"Activo": "true"}
+	if idReporte > 0 {
+		filtro["IdReportes"] = strconv.Itoa(idReporte)
+	}
+	var filas []filaMensajeReporte
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(filtro))
+	o.Query.Set("limit", strconv.Itoa(limite))
+	o.Query.Set("sortby", "Id")
+	o.Query.Set("order", "asc")
+	err := s.soporte.Get(ctx, "reporte_mensajes", o, &filas)
+	return filas, err
+}
+
+// resumir completa en el reporte el total, el ultimo mensaje y la fecha de
+// actividad a partir de su hilo (ordenado por id ascendente).
+func resumir(r *models.Reporte, hilo []filaMensajeReporte, dueno int) {
+	r.TotalMensajes = len(hilo)
+	r.Actividad = r.Fecha
+	if len(hilo) == 0 {
+		return
+	}
+	u := hilo[len(hilo)-1]
+	autor := "soporte"
+	if u.IdRemitente == dueno {
+		autor = "usuario"
+	}
+	r.UltimoMensaje = &models.ResumenMensaje{Autor: autor, Texto: u.Mensaje, Fecha: u.CreadoEn}
+	r.Actividad = u.CreadoEn
 }
 
 // aDominio traduce una fila al Report del frontend.
@@ -195,6 +254,10 @@ func (s *Soporte) Crear(ctx context.Context, idUsuario, tipo, asunto, descripcio
 		return nil, err
 	}
 
+	fecha := creado.CreadoEn
+	if fecha == "" {
+		fecha = time.Now().UTC().Format(time.RFC3339)
+	}
 	return &models.Reporte{
 		ID:           strconv.Itoa(creado.Id),
 		Tipo:         tipo,
@@ -202,6 +265,8 @@ func (s *Soporte) Crear(ctx context.Context, idUsuario, tipo, asunto, descripcio
 		Descripcion:  descripcion,
 		Estado:       "abierto",
 		ReportanteID: idUsuario,
+		Fecha:        fecha,
+		Actividad:    fecha,
 	}, nil
 }
 
@@ -396,9 +461,56 @@ func (s *Soporte) Todos(ctx context.Context) ([]models.Reporte, error) {
 	if err := s.soporte.Get(ctx, "reportes", o, &filas); err != nil {
 		return nil, err
 	}
+
+	// Con todos los reportes, un hilo por reporte serian cientos de lecturas
+	// en cada refresco del panel: se leen todos los mensajes de una vez y se
+	// reparten. Los nombres de quienes reportan se buscan a la par.
+	var mensajes []filaMensajeReporte
+	nombres := map[int]string{}
+	var mu sync.Mutex
+	tareas := []func() error{func() error {
+		m, err := s.filasMensajes(ctx, 0, 10000)
+		mensajes = m
+		return err
+	}}
+	if s.core != nil {
+		for _, f := range filas {
+			if _, ok := nombres[f.IdUsuarios]; ok {
+				continue
+			}
+			nombres[f.IdUsuarios] = ""
+			id := f.IdUsuarios
+			tareas = append(tareas, func() error {
+				var us []filaUsuario
+				ou := &OpcionesUpstream{Query: map[string][]string{}}
+				ou.Query.Set("query", QueryBeego(map[string]string{"Id": strconv.Itoa(id)}))
+				ou.Query.Set("limit", "1")
+				// Sin nombre el panel muestra el id: no es motivo para fallar.
+				if err := s.core.Get(ctx, "usuarios", ou, &us); err == nil && len(us) > 0 {
+					mu.Lock()
+					nombres[id] = strings.TrimSpace(us[0].Nombre + " " + us[0].Apellido)
+					mu.Unlock()
+				}
+				return nil
+			})
+		}
+	}
+	if err := EnParalelo(tareas...); err != nil {
+		return nil, err
+	}
+	hilos := map[int][]filaMensajeReporte{}
+	for _, m := range mensajes {
+		if m.IdReportes != nil {
+			hilos[m.IdReportes.Id] = append(hilos[m.IdReportes.Id], m)
+		}
+	}
+
 	out := make([]models.Reporte, 0, len(filas))
 	for _, f := range filas {
-		out = append(out, s.aDominio(ctx, f))
+		r := s.aDominio(ctx, f)
+		resumir(&r, hilos[f.Id], f.IdUsuarios)
+		r.Reportante = nombres[f.IdUsuarios]
+		out = append(out, r)
 	}
 	return out, nil
 }
