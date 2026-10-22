@@ -245,6 +245,15 @@ func (c *Cuentas) Registrar(ctx context.Context, p models.PeticionRegistro) (*mo
 			ConCampo("email", "Ya registrado.")
 	}
 
+	if c.perfil != nil && strings.TrimSpace(p.Documento) != "" {
+		if usado, err := c.perfil.DocumentoRegistrado(ctx, p.Documento); err != nil {
+			return nil, err
+		} else if usado {
+			return nil, models.Conflicto("Ya existe una cuenta con ese numero de documento.").
+				ConCampo("documento", "Ya registrado.")
+		}
+	}
+
 	idRol, err := c.idRol(ctx, rolABase(p.Rol))
 	if err != nil {
 		return nil, err

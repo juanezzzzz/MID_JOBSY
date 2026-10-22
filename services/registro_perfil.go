@@ -125,6 +125,20 @@ func (s *PerfilRegistro) Completar(ctx context.Context, idUsuario int, p models.
 	return errors.Join(errs...)
 }
 
+// DocumentoRegistrado indica si el numero ya pertenece a otra cuenta. El numero
+// es unico en la base: sin esta comprobacion la cuenta se creaba igual y el
+// documento se descartaba, dejando dos cuentas para la misma persona.
+func (s *PerfilRegistro) DocumentoRegistrado(ctx context.Context, numero string) (bool, error) {
+	var filas []refAnidada
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"NumeroDocumento": strings.TrimSpace(numero)}))
+	o.Query.Set("limit", "1")
+	if err := s.core.Get(ctx, "documentos_identidad", o, &filas); err != nil {
+		return false, err
+	}
+	return len(filas) > 0, nil
+}
+
 func (s *PerfilRegistro) documento(ctx context.Context, idUsuario int, p models.PeticionRegistro) error {
 	tipo := "pasaporte"
 	if n := normalizar(p.Nacionalidad); n == "" || n == "colombiana" {
