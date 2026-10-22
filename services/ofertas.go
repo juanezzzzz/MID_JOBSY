@@ -104,6 +104,9 @@ func (s *Ofertas) aDominio(ctx context.Context, f filaOferta) (models.Oferta, er
 	}
 	o.Modalidad = mod
 
+	if est, err := s.catalogo.EstadoDesdeID(ctx, f.IdEstado); err == nil {
+		o.Estado = est
+	}
 	return o, nil
 }
 

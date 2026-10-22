@@ -3,8 +3,10 @@ package services
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"api_MID/models"
@@ -22,12 +24,117 @@ type Contrataciones struct {
 	catalogo *Catalogo
 	pagos    *Pagos
 	avisos   *Notificaciones
+	core     *ClienteUpstream
 }
 
 // ConAvisos activa la notificacion al empleado cuando lo contratan.
 func (s *Contrataciones) ConAvisos(n *Notificaciones) *Contrataciones {
 	s.avisos = n
 	return s
+}
+
+// ConUsuarios permite completar las contrataciones con el nombre de la otra
+// parte, que vive en Core_api.
+func (s *Contrataciones) ConUsuarios(core *ClienteUpstream) *Contrataciones {
+	s.core = core
+	return s
+}
+
+// completar rellena el titulo de la oferta y el nombre de la contraparte. Lo
+// que no se pueda leer se deja vacio: son datos de presentacion.
+func (s *Contrataciones) completar(ctx context.Context, cs []models.Contratacion) {
+	titulos := map[string]string{}
+	nombres := map[string]string{}
+	for i := range cs {
+		cs[i].ContraparteID = cs[i].EmpleadoID
+		if !cs[i].SoyEmpleador {
+			cs[i].ContraparteID = cs[i].EmpleadorID
+		}
+		titulos[cs[i].OfertaID] = ""
+		nombres[cs[i].ContraparteID] = ""
+	}
+	var mu sync.Mutex
+	var tareas []func() error
+	for id := range titulos {
+		id := id
+		tareas = append(tareas, func() error {
+			var filas []filaOferta
+			o := &OpcionesUpstream{Query: map[string][]string{}}
+			o.Query.Set("query", QueryBeego(map[string]string{"Id": id}))
+			o.Query.Set("limit", "1")
+			if err := s.empleo.Get(ctx, "ofertas", o, &filas); err == nil && len(filas) > 0 {
+				mu.Lock()
+				titulos[id] = filas[0].Titulo
+				mu.Unlock()
+			}
+			return nil
+		})
+	}
+	if s.core != nil {
+		for id := range nombres {
+			id := id
+			tareas = append(tareas, func() error {
+				var filas []filaUsuario
+				o := &OpcionesUpstream{Query: map[string][]string{}}
+				o.Query.Set("query", QueryBeego(map[string]string{"Id": id}))
+				o.Query.Set("limit", "1")
+				if err := s.core.Get(ctx, "usuarios", o, &filas); err == nil && len(filas) > 0 {
+					mu.Lock()
+					nombres[id] = strings.TrimSpace(filas[0].Nombre + " " + filas[0].Apellido)
+					mu.Unlock()
+				}
+				return nil
+			})
+		}
+	}
+	_ = EnParalelo(tareas...)
+	for i := range cs {
+		cs[i].Titulo = titulos[cs[i].OfertaID]
+		cs[i].Contraparte = nombres[cs[i].ContraparteID]
+	}
+}
+
+// cubrirOferta cierra la oferta al contratar a alguien desde ella y responde a
+// las demas postulaciones que seguian abiertas: una oferta es un puesto, y
+// dejarlas "pendientes" para siempre engana a quien se postulo. Si el
+// empleador necesita a otra persona puede reactivar la oferta. Los fallos solo
+// se registran: la contratacion ya quedo hecha.
+func (s *Contrataciones) cubrirOferta(ctx context.Context, of filaOferta, aceptada int) {
+	if idCerrada, err := s.catalogo.IDEstado(ctx, "oferta", "cerrada"); err == nil {
+		if err := s.empleo.Fijar(ctx, "ofertas/"+strconv.Itoa(of.Id), map[string]any{"IdEstado": idCerrada}); err != nil {
+			slog.Warn("no se pudo cerrar la oferta cubierta", "oferta", of.Id, "error", err)
+		}
+	}
+	idRechazo, err := s.catalogo.IDEstado(ctx, "postulacion", "rechazado")
+	if err != nil {
+		return
+	}
+	var posts []filaPostulacion
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"IdOfertas": strconv.Itoa(of.Id), "Activo": "true"}))
+	o.Query.Set("limit", "200")
+	if err := s.empleo.Get(ctx, "postulaciones", o, &posts); err != nil {
+		slog.Warn("no se pudieron leer las demas postulaciones", "oferta", of.Id, "error", err)
+		return
+	}
+	for _, p := range posts {
+		if p.Id == aceptada {
+			continue
+		}
+		if nombre, err := s.catalogo.EstadoDesdeID(ctx, p.IdEstado); err != nil || (nombre != "pendiente" && nombre != "revisando") {
+			continue
+		}
+		if err := s.empleo.Fijar(ctx, "postulaciones/"+strconv.Itoa(p.Id), map[string]any{"IdEstado": idRechazo}); err != nil {
+			slog.Warn("no se pudo cerrar la postulacion", "postulacion", p.Id, "error", err)
+			continue
+		}
+		if s.avisos != nil {
+			if err := s.avisos.Crear(ctx, p.IdEmpleado, "postulacion", "La oferta ya fue cubierta",
+				"La oferta «"+of.Titulo+"» ya fue cubierta. Gracias por postularte.", "/app/mis-postulaciones"); err != nil {
+				slog.Warn("no se pudo avisar a la candidata", "postulacion", p.Id, "error", err)
+			}
+		}
+	}
 }
 
 // avisarContratado deja el aviso al empleado; si falla solo se registra,
@@ -37,7 +144,7 @@ func (s *Contrataciones) avisarContratado(ctx context.Context, idEmpleado int, t
 		return
 	}
 	if err := s.avisos.Crear(ctx, idEmpleado, "postulacion", "Te contrataron",
-		"Te contrataron para «"+titulo+"». Revisa los detalles en tus contrataciones.", "/app/mis-postulaciones"); err != nil {
+		"Te contrataron para «"+titulo+"». Revisa los detalles en tus contrataciones.", "/app/contrataciones"); err != nil {
 		slog.Warn("no se pudo avisar al empleado", "empleado", idEmpleado, "error", err)
 	}
 }
@@ -242,6 +349,7 @@ func (s *Contrataciones) Crear(ctx context.Context, idEmpleador string, p Petici
 	// seria mentir en la pantalla del candidato.
 	_ = s.marcarPostulacionAceptada(ctx, post)
 	s.avisarContratado(ctx, post.IdEmpleado, ofertas[0].Titulo)
+	s.cubrirOferta(ctx, ofertas[0], post.Id)
 
 	res := s.aDominio(ctx, creada)
 	if res.EmpleadoID == "0" {
@@ -327,6 +435,9 @@ func (s *Contrataciones) Mias(ctx context.Context, idUsuario string) ([]models.C
 			out = append(out, c)
 		}
 	}
+	s.completar(ctx, out)
+	// La mas reciente primero.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Fecha > out[j].Fecha })
 	return out, nil
 }
 
@@ -359,7 +470,9 @@ func (s *Contrataciones) PorID(ctx context.Context, idUsuario, idContratacion st
 	c := s.aDominio(ctx, f)
 	c.SoyEmpleador = f.IdEmpleador == usuario
 	c.Agenda = s.agendaDe(ctx, id)
-	return &c, nil
+	una := []models.Contratacion{c}
+	s.completar(ctx, una)
+	return &una[0], nil
 }
 
 // agendaDe devuelve las franjas activas agendadas para una contratacion. Si la

@@ -24,6 +24,12 @@ type Contratacion struct {
 	Nota          string  `json:"nota,omitempty"`
 	Fecha         string  `json:"fecha"`
 
+	// Titulo de la oferta y nombre de la otra parte (el empleado si consulta
+	// el empleador, y al reves), para pintar la lista sin mas peticiones.
+	Titulo        string `json:"titulo,omitempty"`
+	ContraparteID string `json:"contraparteId,omitempty"`
+	Contraparte   string `json:"contraparte,omitempty"`
+
 	// SoyEmpleador le dice al frontend que lado de la relacion ocupa quien
 	// consulta, para decidir que acciones ofrecer.
 	SoyEmpleador bool           `json:"soyEmpleador"`

@@ -34,6 +34,8 @@ type Oferta struct {
 	EsNuevo          bool      `json:"esNuevo"`
 	EmpleadorID      string    `json:"empleadorId"`
 	FechaPublicacion string    `json:"fechaPublicacion"`
+	// Estado: activa | pausada | cerrada. Solo las activas admiten postulaciones.
+	Estado string `json:"estado,omitempty"`
 }
 
 type FiltrosOferta struct {
@@ -76,10 +78,9 @@ type Postulacion struct {
 }
 
 // OfertaPropia es una oferta vista por su empleador: ademas de lo publico,
-// su estado, cuantas postulaciones tiene y todas sus fotos.
+// cuantas postulaciones tiene y todas sus fotos.
 type OfertaPropia struct {
 	Oferta
-	Estado        string   `json:"estado"` // activa | pausada | cerrada
 	Postulaciones int      `json:"postulaciones"`
 	Pendientes    int      `json:"pendientes"`
 	Fotos         []string `json:"fotos"`

@@ -86,10 +86,8 @@ func (s *Empleador) aPropia(ctx context.Context, f filaOferta) (*models.OfertaPr
 	if err != nil {
 		return nil, err
 	}
+	// El estado ya lo resuelve Ofertas.aDominio.
 	p := &models.OfertaPropia{Oferta: base, Fotos: []string{}}
-	if nombre, err := s.cat.EstadoDesdeID(ctx, f.IdEstado); err == nil {
-		p.Estado = nombre
-	}
 	var (
 		fotos []filaOfertaFoto
 		posts []filaPostulacion

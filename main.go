@@ -139,7 +139,7 @@ func configurar() error {
 		Suscripciones:    services.NuevoSuscripciones(susc, catSvc),
 		Soporte:          services.NuevoSoporte(soporte, catSvc),
 		Admin:            services.NuevoAdmin(tienda, core, catSvc, svcTienda),
-		Contrataciones:   services.NuevoContrataciones(empleo, catSvc, svcPagos).ConAvisos(avisos),
+		Contrataciones:   services.NuevoContrataciones(empleo, catSvc, svcPagos).ConAvisos(avisos).ConUsuarios(core),
 		Resenas:          services.NuevoResenas(empleo, catSvc),
 		Notificaciones:   avisos,
 		Configuraciones:  services.NuevoConfiguraciones(usuarios),
