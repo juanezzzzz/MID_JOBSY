@@ -144,6 +144,23 @@ func (m *Monedero) Abonar(ctx context.Context, idUsuario int, monto float64, con
 	return m.escribir(ctx, f)
 }
 
+// Recargar suma al saldo disponible dinero que el usuario puso, sin contarlo
+// como ganado (TotalGanado es lo que cobro por su trabajo).
+func (m *Monedero) Recargar(ctx context.Context, idUsuario int, monto float64) error {
+	if monto <= 0 {
+		return models.Validacion("El monto a recargar debe ser mayor que cero.")
+	}
+	l := m.bloqueoDe(idUsuario)
+	l.Lock()
+	defer l.Unlock()
+	f, err := m.obtenerOCrear(ctx, idUsuario)
+	if err != nil {
+		return err
+	}
+	f.SaldoDisponible += monto
+	return m.escribir(ctx, f)
+}
+
 // Cargar descuenta del monedero. Falla si no alcanza.
 func (m *Monedero) Cargar(ctx context.Context, idUsuario int, monto float64, concepto string) error {
 	if monto <= 0 {

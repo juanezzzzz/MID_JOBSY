@@ -129,38 +129,63 @@ func (s *PerfilEmpleado) FijarDisponibilidad(ctx context.Context, idUsuario stri
 		}
 	}
 
-	// Se desactivan las anteriores. No se borran: el Delete del backend es un
-	// DELETE real y podria haber historico colgando.
-	var previas []filaDisponibilidad
-	o := &OpcionesUpstream{Query: map[string][]string{}}
-	o.Query.Set("query", QueryBeego(map[string]string{
-		"IdPerfilesEmpleado": strconv.Itoa(perfil.Id),
-		"Activo":             "true",
-	}))
-	o.Query.Set("limit", "100")
-	if err := s.empleo.Get(ctx, "disponibilidad_empleado", o, &previas); err != nil {
-		return nil, err
-	}
-	for _, p := range previas {
-		if err := s.empleo.Fijar(ctx, "disponibilidad_empleado/"+strconv.Itoa(p.Id), map[string]any{"Activo": false}); err != nil {
-			return nil, err
-		}
-	}
-
+	// La tabla admite una fila por (perfil, dia, turno), y las filas viejas no se
+	// borran (puede haber historico colgando): se reutiliza la del mismo dia y
+	// turno y se desactivan las que ya no estan. Antes se creaban filas nuevas
+	// ignorando el error, y el indice unico las rechazaba en silencio.
+	type clave struct{ dia, turno int }
+	nuevas := map[clave]models.FranjaAgenda{}
 	for _, f := range franjas {
 		idDia, err := s.catalogo.IDDiaSemana(ctx, f.Dia)
 		if err != nil {
 			return nil, models.Validacion("Dia de la semana desconocido: " + f.Dia)
 		}
+		k := clave{idDia, turnoDe(f.HoraInicio)}
+		if _, dup := nuevas[k]; dup {
+			return nil, models.Validacion("Solo puedes tener una franja de manana, una de tarde y una de noche por dia.")
+		}
+		nuevas[k] = f
+	}
+
+	var todas []filaDisponibilidad
+	o := &OpcionesUpstream{Query: map[string][]string{}}
+	o.Query.Set("query", QueryBeego(map[string]string{"IdPerfilesEmpleado": strconv.Itoa(perfil.Id)}))
+	o.Query.Set("limit", "200")
+	if err := s.empleo.Get(ctx, "disponibilidad_empleado", o, &todas); err != nil {
+		return nil, err
+	}
+	existentes := map[clave]filaDisponibilidad{}
+	for _, f := range todas {
+		existentes[clave{f.IdDiaSemana, f.IdTurno}] = f
+	}
+
+	for k, f := range nuevas {
+		if fila, ok := existentes[k]; ok {
+			if err := s.empleo.Fijar(ctx, "disponibilidad_empleado/"+strconv.Itoa(fila.Id), map[string]any{
+				"HoraInicio": f.HoraInicio, "HoraFin": f.HoraFin, "Activo": true,
+			}); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		var creada map[string]any
-		_ = s.empleo.Post(ctx, "disponibilidad_empleado", map[string]any{
+		if err := s.empleo.Post(ctx, "disponibilidad_empleado", map[string]any{
 			"IdPerfilesEmpleado": map[string]any{"Id": perfil.Id},
-			"IdDiaSemana":        idDia,
-			"IdTurno":            1,
+			"IdDiaSemana":        k.dia,
+			"IdTurno":            k.turno,
 			"HoraInicio":         f.HoraInicio,
 			"HoraFin":            f.HoraFin,
 			"Activo":             true,
-		}, &creada)
+		}, &creada); err != nil {
+			return nil, err
+		}
+	}
+	for k, fila := range existentes {
+		if _, sigue := nuevas[k]; !sigue && fila.Activo {
+			if err := s.empleo.Fijar(ctx, "disponibilidad_empleado/"+strconv.Itoa(fila.Id), map[string]any{"Activo": false}); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return s.Disponibilidad(ctx, idUsuario)
@@ -266,4 +291,17 @@ func (s *PerfilEmpleado) SubirDocumento(ctx context.Context, idUsuario, tipo, ur
 		ArchivoURL: url,
 		Estado:     "pendiente",
 	}, nil
+}
+
+// turnoDe ubica una franja en el turno del catalogo por su hora de inicio:
+// 1 manana (antes de las 12), 2 tarde (antes de las 18), 3 noche.
+func turnoDe(horaInicio string) int {
+	switch {
+	case horaInicio < "12:00":
+		return 1
+	case horaInicio < "18:00":
+		return 2
+	default:
+		return 3
+	}
 }

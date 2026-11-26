@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"net/http"
+	"strconv"
 
+	"api_MID/models"
 	"api_MID/services"
 )
 
@@ -306,4 +308,92 @@ func (c *TiendaController) MisPagos() {
 		return
 	}
 	c.Responder(http.StatusOK, items)
+}
+
+// ResenasProducto lista las opiniones de un producto. Publica.
+// GET /api/tienda/productos/:id/resenas.
+func (c *CatalogoController) ResenasProducto() {
+	l, err := svc.ResenasProductos.DeProducto(c.Contexto(), c.ParamID())
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusOK, l)
+}
+
+// PublicarResenaProducto guarda la opinion del usuario con hasta 3 fotos.
+// POST /api/tienda/productos/:id/resenas (multipart: calificacion, titulo,
+// comentario, fotos).
+func (c *TiendaController) PublicarResenaProducto() {
+	id, err := c.UsuarioActual()
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	r := c.Ctx.Request
+	if err := r.ParseMultipartForm(12 << 20); err != nil {
+		c.Fallo(models.Validacion("El formulario no es valido o las fotos pesan demasiado."))
+		return
+	}
+	cal, _ := strconv.Atoi(r.FormValue("calificacion"))
+	fotos, err := c.recibirArchivos("fotos", "resenas", 3)
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	res, err := svc.ResenasProductos.Publicar(c.Contexto(), id, c.ParamID(), services.PeticionResenaProducto{
+		Calificacion: cal, Titulo: r.FormValue("titulo"), Comentario: r.FormValue("comentario"), Fotos: fotos,
+	})
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusCreated, res)
+}
+
+// SuscribirBoletin agrega un correo al boletin del blog. Publica.
+// POST /api/usuarios/boletin con {"correo"}.
+func (c *CatalogoController) SuscribirBoletin() {
+	var p struct {
+		Correo string `json:"correo"`
+	}
+	if err := c.LeerJSON(&p); err != nil {
+		c.Fallo(err)
+		return
+	}
+	if err := svc.Boletin.Suscribir(c.Contexto(), p.Correo); err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.SinContenido()
+}
+
+// RecargarSaldo cobra con tarjeta y abona el monto al saldo Jobsy.
+// POST /api/tienda/saldo/recargar con {"monto","metodoPago","titular","ultimos4"}.
+func (c *TiendaController) RecargarSaldo() {
+	id, err := c.UsuarioActual()
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	var p struct {
+		Monto float64 `json:"monto"`
+		services.DatosPago
+	}
+	if err := c.LeerJSON(&p); err != nil {
+		c.Fallo(err)
+		return
+	}
+	u, err := svc.Cuentas.Perfil(c.Contexto(), id)
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	uid, _ := strconv.Atoi(id)
+	res, err := svc.Pagos.Recargar(c.Contexto(), uid, u.Email, p.Monto, p.DatosPago)
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusCreated, res)
 }

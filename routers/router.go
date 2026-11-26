@@ -29,6 +29,7 @@ func init() {
 	beego.Router("/api/salud", &controllers.SaludController{}, "get:Salud")
 
 	beego.Router("/api/usuarios/login", &controllers.CuentasController{}, "post:Login")
+	beego.Router("/api/usuarios/login/google", &controllers.CuentasController{}, "get:ConfigGoogle;post:LoginGoogle")
 	beego.Router("/api/usuarios/registro", &controllers.CuentasController{}, "post:Registro")
 	beego.Router("/api/usuarios/recuperar", &controllers.CuentasController{}, "post:Recuperar")
 
@@ -46,9 +47,12 @@ func init() {
 
 	beego.Router("/api/tienda/productos", &controllers.CatalogoController{}, "get:Productos")
 	beego.Router("/api/tienda/productos/:id", &controllers.CatalogoController{}, "get:DetalleProducto")
+	// GET publico; POST exige sesion: van en controladores distintos porque la sesion la pide el tipo.
+	beego.Router("/api/tienda/productos/:id/resenas", &controllers.CatalogoController{}, "get:ResenasProducto")
 	beego.Router("/api/catalogo/categorias", &controllers.CatalogoController{}, "get:Categorias")
 	beego.Router("/api/suscripciones/planes", &controllers.CatalogoController{}, "get:Planes")
 	beego.Router("/api/tienda/metodos-pago", &controllers.CatalogoController{}, "get:MetodosPago")
+	beego.Router("/api/usuarios/boletin", &controllers.CatalogoController{}, "post:SuscribirBoletin")
 
 	beego.Router("/archivos/*", &controllers.ArchivosController{}, "get:Servir")
 
@@ -69,6 +73,9 @@ func init() {
 	beego.Router("/api/usuarios/notificaciones", &controllers.PerfilController{}, "get:MisNotificaciones")
 	beego.Router("/api/usuarios/notificaciones/:id/leida", &controllers.PerfilController{}, "post:MarcarNotificacionLeida")
 	beego.Router("/api/usuarios/configuracion", &controllers.PerfilController{}, "get:MiConfiguracion;put:ActualizarConfiguracion")
+	beego.Router("/api/usuarios/guardados", &controllers.PerfilController{}, "get:MisGuardados;post:GuardarPerfil")
+	beego.Router("/api/usuarios/guardados/:id", &controllers.PerfilController{}, "delete:QuitarGuardado")
+	beego.Router("/api/tienda/productos/:id/resenas", &controllers.TiendaController{}, "post:PublicarResenaProducto")
 
 	// GET /api/empleo/ofertas es publico (OfertasController); POST exige sesion.
 	beego.Router("/api/empleo/ofertas", &controllers.EmpleoController{}, "post:CrearOferta")
@@ -95,6 +102,7 @@ func init() {
 	beego.Router("/api/tienda/metodos-guardados", &controllers.TiendaController{}, "get:MisMetodosGuardados;post:GuardarMetodoPago")
 	beego.Router("/api/tienda/metodos-guardados/:id", &controllers.TiendaController{}, "delete:BorrarMetodoPago")
 	beego.Router("/api/tienda/saldo", &controllers.TiendaController{}, "get:MiSaldo")
+	beego.Router("/api/tienda/saldo/recargar", &controllers.TiendaController{}, "post:RecargarSaldo")
 	beego.Router("/api/tienda/pagos/mios", &controllers.TiendaController{}, "get:MisPagos")
 
 	beego.Router("/api/suscripciones/mi-suscripcion", &controllers.SuscripcionesController{}, "get:MiSuscripcion")

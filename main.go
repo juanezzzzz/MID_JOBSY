@@ -124,10 +124,11 @@ func configurar() error {
 	svcPostulaciones := services.NuevoPostulaciones(empleo, catSvc).ConAvisos(avisos)
 	svcPagos := services.NuevoPagos(tienda, catSvc, registroPago, monedero)
 	svcTienda := services.NuevoTienda(tienda, catSvc, svcPagos)
+	svcCuentas := services.NuevoCuentas(core, svcAuth).ConPerfil(services.NuevoPerfilRegistro(core, empleo, cat, catSvc))
 	controllers.Configurar(&controllers.Servicios{
 		Cfg:              cfg,
 		Auth:             svcAuth,
-		Cuentas:          services.NuevoCuentas(core, svcAuth).ConPerfil(services.NuevoPerfilRegistro(core, empleo, cat, catSvc)),
+		Cuentas:          svcCuentas,
 		Empleados:        svcEmpleados,
 		Ofertas:          svcOfertas,
 		Empleador:        services.NuevoEmpleador(empleo, catSvc, svcOfertas, svcPostulaciones, svcEmpleados, avisos),
@@ -143,6 +144,9 @@ func configurar() error {
 		Resenas:          services.NuevoResenas(empleo, catSvc),
 		Notificaciones:   avisos,
 		Configuraciones:  services.NuevoConfiguraciones(usuarios),
+		Guardados:        services.NuevoGuardados(usuarios, svcEmpleados),
+		ResenasProductos: services.NuevoResenasProductos(tienda, svcTienda, svcCuentas),
+		Boletin:          services.NuevoBoletin(usuarios),
 		Almacen:          almacenArchivos,
 		Carrito:          services.NuevoCarrito(tienda, catSvc),
 		MetodosGuardados: services.NuevoMetodosGuardados(tienda, catSvc),
