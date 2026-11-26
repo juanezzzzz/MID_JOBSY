@@ -28,6 +28,30 @@ func (c *CuentasController) Login() {
 	c.Responder(http.StatusOK, res)
 }
 
+// LoginGoogle entra con el ID token de Google Identity Services.
+// POST /api/usuarios/login/google con {"credencial"}.
+func (c *CuentasController) LoginGoogle() {
+	var p struct {
+		Credencial string `json:"credencial"`
+	}
+	if err := c.LeerJSON(&p); err != nil {
+		c.Fallo(err)
+		return
+	}
+	res, err := svc.Cuentas.LoginGoogle(c.Contexto(), svc.Cfg.GoogleClientID, p.Credencial)
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusOK, res)
+}
+
+// ConfigGoogle dice al front si mostrar el boton de Google y con que Client
+// ID (es publico por diseno). GET /api/usuarios/login/google.
+func (c *CuentasController) ConfigGoogle() {
+	c.Responder(http.StatusOK, map[string]string{"clientId": svc.Cfg.GoogleClientID})
+}
+
 // Registro crea una cuenta nueva y responde 201 con el usuario.
 // POST /api/usuarios/registro.
 func (c *CuentasController) Registro() {
@@ -387,4 +411,58 @@ func (c *PerfilController) ActualizarConfiguracion() {
 		return
 	}
 	c.Responder(http.StatusOK, res)
+}
+
+// MisGuardados lista los perfiles de empleados que el usuario guardo.
+// GET /api/usuarios/guardados.
+func (c *PerfilController) MisGuardados() {
+	id, err := c.UsuarioActual()
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	lista, err := svc.Guardados.Mios(c.Contexto(), id)
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusOK, lista)
+}
+
+// GuardarPerfil agrega un empleado a los guardados del usuario.
+// POST /api/usuarios/guardados con {"empleadoId"}.
+func (c *PerfilController) GuardarPerfil() {
+	id, err := c.UsuarioActual()
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	var p struct {
+		EmpleadoID string `json:"empleadoId"`
+	}
+	if err := c.LeerJSON(&p); err != nil {
+		c.Fallo(err)
+		return
+	}
+	emp, err := svc.Guardados.Guardar(c.Contexto(), id, p.EmpleadoID)
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.Responder(http.StatusCreated, emp)
+}
+
+// QuitarGuardado saca un empleado de los guardados; :id es el del empleado.
+// DELETE /api/usuarios/guardados/:id.
+func (c *PerfilController) QuitarGuardado() {
+	id, err := c.UsuarioActual()
+	if err != nil {
+		c.Fallo(err)
+		return
+	}
+	if err := svc.Guardados.Quitar(c.Contexto(), id, c.ParamID()); err != nil {
+		c.Fallo(err)
+		return
+	}
+	c.SinContenido()
 }

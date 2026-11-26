@@ -43,6 +43,9 @@ type Config struct {
 	// contrario seria aceptar a ciegas que cualquiera confirme un pago.
 	SecretoPasarela string
 
+	// GoogleClientID es el OAuth Client ID web; vacio apaga el login con Google.
+	GoogleClientID string
+
 	TimeoutUpstream time.Duration
 
 	// DirArchivos es donde se guardan las subidas; URLPublica es el origen
@@ -70,6 +73,7 @@ func CargarConfig() (*Config, error) {
 		DirArchivos:        conf("dir_archivos", "archivos"),
 		URLPublica:         conf("url_publica", "http://localhost:9090"),
 		SecretoPasarela:    conf("secreto_pasarela", ""),
+		GoogleClientID:     conf("google_client_id", ""),
 
 		Core:          ConfigUpstream{"core", conf("url_core", "http://localhost:8081")},
 		Usuarios:      ConfigUpstream{"usuarios", conf("url_usuarios", "http://localhost:8082")},

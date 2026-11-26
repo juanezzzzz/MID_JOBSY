@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"fmt"
+	"mime/multipart"
 	"io"
 	"net/http"
 
@@ -54,9 +56,45 @@ func (c *SesionController) recibirArchivo(campo, carpeta string) (string, error)
 		return "", models.Validacion("El archivo es demasiado grande o el formulario no es valido.")
 	}
 
-	archivo, cabecera, err := r.FormFile(campo)
+	_, cabecera, err := r.FormFile(campo)
 	if err != nil {
 		return "", models.Validacion("Falta el archivo en el campo " + campo + ".")
+	}
+	return c.guardarArchivo(cabecera, carpeta)
+}
+
+// recibirArchivos guarda hasta max archivos del campo (opcional) y devuelve
+// sus urls. El formulario ya debe venir como multipart.
+func (c *SesionController) recibirArchivos(campo, carpeta string, max int) ([]string, error) {
+	if svc.Almacen == nil {
+		return nil, models.NoImplementado("El almacenamiento de archivos no esta configurado.")
+	}
+	r := c.Ctx.Request
+	if r.MultipartForm == nil {
+		if err := r.ParseMultipartForm(12 << 20); err != nil {
+			return nil, models.Validacion("Los archivos son demasiado grandes o el formulario no es valido.")
+		}
+	}
+	cabeceras := r.MultipartForm.File[campo]
+	if len(cabeceras) > max {
+		return nil, models.Validacion(fmt.Sprintf("Puedes adjuntar como maximo %d archivos.", max))
+	}
+	urls := make([]string, 0, len(cabeceras))
+	for _, h := range cabeceras {
+		u, err := c.guardarArchivo(h, carpeta)
+		if err != nil {
+			return nil, err
+		}
+		urls = append(urls, u)
+	}
+	return urls, nil
+}
+
+// guardarArchivo valida el tipo real del archivo y lo pasa al almacen.
+func (c *SesionController) guardarArchivo(cabecera *multipart.FileHeader, carpeta string) (string, error) {
+	archivo, err := cabecera.Open()
+	if err != nil {
+		return "", models.Validacion("No se pudo leer el archivo.")
 	}
 	defer archivo.Close()
 

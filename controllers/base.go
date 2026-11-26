@@ -47,6 +47,9 @@ type Servicios struct {
 	Resenas          *services.Resenas
 	Notificaciones   *services.Notificaciones
 	Configuraciones  *services.Configuraciones
+	Guardados        *services.Guardados
+	ResenasProductos *services.ResenasProductos
+	Boletin          *services.Boletin
 	Almacen          services.Almacen
 	Carrito          *services.Carrito
 	MetodosGuardados *services.MetodosGuardados

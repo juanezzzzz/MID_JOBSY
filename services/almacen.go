@@ -51,6 +51,12 @@ var tiposPermitidos = map[string]map[string]string{
 		"image/png":  ".png",
 		"image/webp": ".webp",
 	},
+	// Fotos que acompanan las resenas de la tienda.
+	"resenas": {
+		"image/jpeg": ".jpg",
+		"image/png":  ".png",
+		"image/webp": ".webp",
+	},
 	"cv": {
 		"application/pdf": ".pdf",
 	},
@@ -73,6 +79,7 @@ var limites = map[string]int64{
 	"cv":         10 << 20, // 10 MiB
 	"documentos": 10 << 20,
 	"ofertas":    5 << 20,
+	"resenas":    3 << 20, // el front avisa 3 MB por foto
 }
 
 // AlmacenEnDisco guarda bajo un directorio local y sirve por una url base.

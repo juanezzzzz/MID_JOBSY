@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -139,9 +140,51 @@ func (p *Pagos) Cobrar(ctx context.Context, idUsuario int, correo string, idPedi
 	}
 
 	referencia := "PED-" + strconv.Itoa(idPedido)
+	// El esquema exige que cuelgue de un pedido o de una contratacion, nunca
+	// de ambos.
+	origen := map[string]any{"IdPedidos": map[string]any{"Id": idPedido}}
 	if idContratacion != nil {
 		referencia = "CON-" + strconv.Itoa(*idContratacion)
+		origen = map[string]any{"IdContrataciones": *idContratacion}
 	}
+	return p.cobrar(ctx, idUsuario, correo, referencia, origen, contextoTipoPago(idContratacion), "Pago "+referencia, monto, d, via, idMetodo)
+}
+
+// Recargar abona saldo Jobsy cobrando con tarjeta. Queda como un pago sin
+// pedido ni contratacion, con su ingreso, asi aparece en el historial.
+func (p *Pagos) Recargar(ctx context.Context, idUsuario int, correo string, monto float64, d DatosPago) (*ResultadoPago, error) {
+	if monto < 10000 || monto > 2000000 {
+		return nil, models.Validacion("La recarga debe estar entre $10.000 y $2.000.000.").ConCampo("monto", "Fuera de rango.")
+	}
+	// Solo tarjeta: PSE confirma despues por notificacion y ese flujo acredita pedidos, no saldo.
+	if d.Metodo != "tarjeta" {
+		return nil, models.Validacion("Por ahora el saldo solo se recarga con tarjeta.").ConCampo("metodoPago", "Usa tarjeta.")
+	}
+	via, err := p.registro.Para(d.Metodo)
+	if err != nil {
+		return nil, models.Validacion("Ese metodo de pago no esta disponible.").ConCampo("metodoPago", "No disponible.")
+	}
+	idMetodo, err := p.idMetodoPago(ctx, d.Metodo)
+	if err != nil {
+		return nil, err
+	}
+	referencia := "REC-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	res, err := p.cobrar(ctx, idUsuario, correo, referencia, map[string]any{}, "tienda", "Recarga de saldo", monto, d, via, idMetodo)
+	if err != nil {
+		return nil, err
+	}
+	if res.Estado == string(PagoAprobado) {
+		if err := p.monedero.Recargar(ctx, idUsuario, monto); err != nil {
+			// El cobro ya se capturo: sin abono el usuario perderia el dinero.
+			return nil, models.Interno(fmt.Errorf("recarga %s cobrada sin abonar: %w", referencia, err))
+		}
+	}
+	return res, nil
+}
+
+// cobrar pasa el cobro por la pasarela y registra el pago (con el origen
+// dado) y, si se aprobo, su transaccion.
+func (p *Pagos) cobrar(ctx context.Context, idUsuario int, correo, referencia string, origen map[string]any, contexto, descripcion string, monto float64, d DatosPago, via Pasarela, idMetodo int) (*ResultadoPago, error) {
 
 	res, err := via.Cobrar(ctx, Cobro{
 		Referencia: referencia,
@@ -176,15 +219,11 @@ func (p *Pagos) Cobrar(ctx context.Context, idUsuario int, correo string, idPedi
 		"Ultimos4":       d.Ultimos4,
 		"Activo":         true,
 	}
-	// El esquema exige que cuelgue de un pedido o de una contratacion, nunca
-	// de ambos ni de ninguno.
-	if idContratacion != nil {
-		cuerpo["IdContrataciones"] = *idContratacion
-	} else {
-		cuerpo["IdPedidos"] = map[string]any{"Id": idPedido}
+	for k, v := range origen {
+		cuerpo[k] = v
 	}
 
-	if idTipo, err := p.catalogo.IDTipo(ctx, "pago", contextoTipoPago(idContratacion)); err == nil {
+	if idTipo, err := p.catalogo.IDTipo(ctx, "pago", contexto); err == nil {
 		cuerpo["IdTipoPago"] = idTipo
 	}
 
@@ -195,7 +234,11 @@ func (p *Pagos) Cobrar(ctx context.Context, idUsuario int, correo string, idPedi
 
 	// El movimiento contable solo tiene sentido si el dinero se capturo.
 	if res.Estado == PagoAprobado {
-		if err := p.registrarTransaccion(ctx, idUsuario, creado.Id, monto, "egreso", "Pago "+referencia); err != nil {
+		tipo := "egreso"
+		if len(origen) == 0 {
+			tipo = "ingreso"
+		}
+		if err := p.registrarTransaccion(ctx, idUsuario, creado.Id, monto, tipo, descripcion); err != nil {
 			// La transaccion es rastro, no dinero: su fallo no invalida el
 			// cobro, pero debe verse en el log.
 			_ = err
@@ -380,6 +423,9 @@ func (p *Pagos) Mios(ctx context.Context, idUsuario string) ([]map[string]any, e
 		}
 		if f.IdPedidos != nil {
 			item["pedidoId"] = strconv.Itoa(f.IdPedidos.Id)
+		}
+		if f.IdPedidos == nil && f.IdContrataciones == nil {
+			item["concepto"] = "Recarga de saldo"
 		}
 		if f.Ultimos4 != "" {
 			item["ultimos4"] = f.Ultimos4

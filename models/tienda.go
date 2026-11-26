@@ -100,3 +100,16 @@ type MetodoGuardado struct {
 	Enmascarado string `json:"enmascarado"`
 	EsPrincipal bool   `json:"esPrincipal"`
 }
+
+// ResenaProducto es una opinion de la tienda tal como la consume el front.
+type ResenaProducto struct {
+	ID           string   `json:"id"`
+	ProductoID   string   `json:"productoId"`
+	Autor        string   `json:"autor"`
+	Calificacion int      `json:"calificacion"`
+	Titulo       string   `json:"titulo"`
+	Comentario   string   `json:"comentario"`
+	Fotos        []string `json:"fotos"`
+	Fecha        string   `json:"fecha"`
+	Verificado   bool     `json:"verificado"`
+}
